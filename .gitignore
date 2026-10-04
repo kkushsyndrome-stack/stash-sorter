@@ -7,3 +7,5 @@ scratch/
 .venv-build/
 dist/
 rules.json
+
+sessions/

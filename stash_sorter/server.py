@@ -4,6 +4,7 @@ import json
 import re
 import secrets
 import threading
+import time
 import traceback
 import webbrowser
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -84,6 +85,8 @@ def serve(session, port=0, open_browser=True):
                         "/api/rules": lambda: session.rules_json(),
                         "/api/duplicates": lambda: session.duplicates(),
                         "/api/empty_mules": lambda: session.empty_mules(),
+                        "/api/session": lambda: session.session_state(),
+                        "/api/session/load": lambda: session.session_load(q.get("id", "")),
                         "/api/backups": lambda: session.backups(),
                     }
                     if path in routes:
@@ -106,6 +109,12 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, {"ok": True})
                     if path == "/api/plan":
                         return self._send(200, session.make_plan(body))
+                    if path == "/api/session/start":
+                        return self._send(200, session.session_start())
+                    if path == "/api/session/end":
+                        return self._send(200, session.session_end())
+                    if path == "/api/session/delete":
+                        return self._send(200, session.session_delete(body.get("id", "")))
                     if path == "/api/plan_delete_items":
                         return self._send(200, session.plan_delete_items(body.get("keys") or []))
                     if path == "/api/plan_delete_mules":
@@ -134,6 +143,16 @@ def serve(session, port=0, open_browser=True):
                 return self._send(500, {"error": str(e)})
             return self._send(404, {"error": "not found"})
 
+    def watch():  # session tracker: look at the save folder every couple of seconds (read-only)
+        while True:
+            time.sleep(2)
+            try:
+                with lock:
+                    session.tracker.poll()
+            except Exception:
+                traceback.print_exc()
+
+    threading.Thread(target=watch, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
     print(f"Stash Sorter is running at {url}  (close this window or press Ctrl+C to stop)")

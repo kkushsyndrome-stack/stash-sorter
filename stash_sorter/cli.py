@@ -11,7 +11,8 @@ from .rules import RulesError
 
 def _session(args):
     from .service import Session
-    return Session(saves=args.saves, install=args.install, data_dir=args.data_dir, backups=args.backups)
+    return Session(saves=args.saves, install=args.install, data_dir=args.data_dir, backups=args.backups,
+                   sessions=args.sessions)
 
 
 def _split(s):
@@ -182,6 +183,39 @@ def cmd_delete_mules(args):
     _confirm_and_apply(s, p, args.yes)
 
 
+def _fmt_seconds(n):
+    m, sec = divmod(int(n), 60)
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m" if h else f"{m}m{sec:02d}s"
+
+
+def cmd_track(args):
+    import time
+    s = _session(args)
+    t = s.tracker
+    sess = t.start()
+    print(f"Tracking session {sess['id']} - play as normal; every Save & Exit is logged. Ctrl+C ends the session.")
+    try:
+        while True:
+            time.sleep(2)
+            run = t.poll()
+            if not run:
+                continue
+            who = ", ".join(run["characters"])
+            head = f"Run {run['n']}" if run["kind"] == "run" else "Mule visit"
+            print(f"\n{head} - {who} - {_fmt_seconds(run['seconds'])} - XP {run['xp']:+,} - gold {run['gold']:+,}")
+            for f in run["found"]:
+                star = " NEW!" if f["name"] in run["grail"] else ""
+                print(f"   + {f['count']}x {f['name']} [{f['quality']}]{star}")
+            for f in run["left"]:
+                print(f"   - {f['count']}x {f['name']}")
+    except KeyboardInterrupt:
+        done = t.end()
+        tot = done["totals"]
+        print(f"\nSession ended: {tot['runs']} runs in {_fmt_seconds(tot['seconds'])} ({tot['runs_per_hour']}/h), "
+              f"{tot['found']} items found, XP {tot['xp']:+,}, gold {tot['gold']:+,}")
+
+
 def cmd_backups(args):
     s = _session(args)
     for b in s.backups():
@@ -249,6 +283,7 @@ def main(argv=None):
     ap.add_argument("--install", help="D2R install folder, used to read extracted game tables (default: auto-detect)")
     ap.add_argument("--data-dir", help="folder with extracted data/global/excel tables (e.g. for a mod)")
     ap.add_argument("--backups", help="where backups are written (default: ./backups next to the tool)")
+    ap.add_argument("--sessions", help="where session history is kept (default: ./sessions next to the tool)")
     sub = ap.add_subparsers(dest="cmd")
 
     def plan_args(p):
@@ -289,6 +324,7 @@ def main(argv=None):
     p = sub.add_parser("find", help="search every item by name, stats or location")
     p.add_argument("query", nargs="+")
     p.set_defaults(func=cmd_find)
+    sub.add_parser("track", help="session tracker in the terminal: logs every Save & Exit").set_defaults(func=cmd_track)
     sub.add_parser("dupes", help="list unique and set items you have more than once").set_defaults(func=cmd_dupes)
     p = sub.add_parser("delete-items", help="delete items by key (see `dupes`); backed up and undoable")
     p.add_argument("keys", nargs="+")

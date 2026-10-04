@@ -10,6 +10,7 @@ from .art import ArtIndex
 from .describe import Describer
 from .items import MODE_STORED, MODE_EQUIPPED, MODE_BELT, PAGE_INVENTORY, PAGE_STASH, PAGE_CUBE
 from .rules import Ruleset, load_default_rules, validate, RulesError
+from .tracker import Tracker
 from .savefiles import TAB_NORMAL, TAB_STACKABLES, empty_status
 from .world import find_save_dir, load_world, mule_status
 
@@ -17,7 +18,7 @@ GRID_PAGES = (PAGE_INVENTORY, PAGE_STASH, PAGE_CUBE)
 
 
 class Session:
-    def __init__(self, saves=None, install=None, data_dir=None, backups=None, rules_path=None):
+    def __init__(self, saves=None, install=None, data_dir=None, backups=None, rules_path=None, sessions=None):
         self.save_dir = find_save_dir(saves)
         self.install = install
         self.gd = gamedata.load(install_dir=install, data_dir=data_dir)
@@ -30,6 +31,8 @@ class Session:
         self.plan_id = 0
         self.reload()
         self.crafter_level = self.max_char_level()
+        self.tracker = Tracker(self.save_dir, self.gd, self.world.names,
+                               Path(sessions) if sessions else paths.app_dir() / "sessions", self._describe_found)
 
     # ---------- loading
     def reload(self):
@@ -110,6 +113,7 @@ class Session:
             "backup_dir": str(self.backup_dir), "game_running": applier.game_running(),
             "default_stash": stash.path.name if stash else None, "art": self.art.available,
             "journal": applier.pending_journal(self.backup_dir),
+            "stale": [p.name for p in w.changed_on_disk()][:10],
             "stashes": [{"file": s.path.name, "modern": s.modern, "hardcore": s.hardcore, "era": s.era,
                          "items": sum(len(t.items) for t in s.normal_tabs()),
                          "gold": sum(t.gold for t in s.tabs),
@@ -328,6 +332,32 @@ class Session:
             "mules": [vars(m) for m in p.mules], "skipped": p.skipped_chars, "labels": p.labels,
             "files_touched": len(files) + len(p.renames) + len(p.new_mules),
         }
+
+    # ---------- session tracker
+    def _describe_found(self, it):
+        j = self.item_json(it, "")
+        return {k: j[k] for k in ("name", "base", "quality", "category", "ilvl", "art", "stats", "ethereal")}
+
+    def session_state(self):
+        t = self.tracker
+        if t.session:
+            t._update_totals()
+        return {"active": t.session, "history": t.history()}
+
+    def session_start(self):
+        self.tracker.start()
+        return self.session_state()
+
+    def session_end(self):
+        self.tracker.end()
+        return self.session_state()
+
+    def session_load(self, sid):
+        return self.tracker.load(sid)
+
+    def session_delete(self, sid):
+        self.tracker.delete(sid)
+        return self.session_state()
 
     # ---------- clean-up: duplicates and empty mules
     def duplicates(self):

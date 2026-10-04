@@ -23,6 +23,11 @@ Runs locally on your PC; nothing is uploaded anywhere.
 - **Create new mules** when space runs out (experimental): copies an empty level-1 character without its items.
 - **Stackables tab** (beta): move loose runes, gems and materials into the RotW Stackables tab.
 
+**Session tracker:** leave Stash Sorter open while you play and press *Start session*. Every Save & Exit is
+logged as a run: the loot you found (new holy-grail finds flagged), what left (sold, used, dropped), experience,
+levels and gold gained, run times and runs per hour. Moving items between characters isn't counted as loot, and
+your saves are only read. Finished sessions are kept in a `sessions` folder next to the app for later.
+
 **Look around:**
 - The game's own **item artwork** and **tooltips** ("+20% Faster Cast Rate", "Level 10 Life Tap (12/15 Charges)").
 - **Find**: search every character and stash by name, stat or location ("shako", "faster cast", "CharmMule").
@@ -84,10 +89,11 @@ download this folder, and double-click **`Stash Sorter.bat`** — or run `python
 2. **Shared Stash** — click items you want to **keep** in the stash (⚑).
 3. **Sort & Distribute** — pick a mode, **Preview plan**, check where things go, then **Apply**.
    New to it? Set *Test run* to "Just 1 item" first.
-4. **Find**, **Collection**, **Item Levels** — browse and search.
-5. **Clean Up** — delete duplicate uniques/sets you don't need, and empty mules.
-6. **Sorting Rules** — change how items are categorised and what mules are called.
-7. **Backups** — undo a change or restore a backup.
+4. **Session** — start a session before you play; every Save & Exit shows up as a run.
+5. **Find**, **Collection**, **Item Levels** — browse and search.
+6. **Clean Up** — delete duplicate uniques/sets you don't need, and empty mules.
+7. **Sorting Rules** — change how items are categorised and what mules are called.
+8. **Backups** — undo a change or restore a backup.
 
 ### Command line
 
@@ -98,6 +104,7 @@ python -m stash_sorter apply --mode stash --limit 1          # test run: move on
 python -m stash_sorter apply --mode stash --rename new       # do it (asks for confirmation)
 python -m stash_sorter plan --mode migrate                   # old stash -> RotW stash
 python -m stash_sorter find harlequin                        # where is my Shako?
+python -m stash_sorter track                                 # session tracker in the terminal (Ctrl+C ends)
 python -m stash_sorter dupes                                 # duplicate uniques/sets (with item keys)
 python -m stash_sorter delete-items KEY [KEY ...]            # delete chosen copies (asks first)
 python -m stash_sorter empty-mules                           # which mules are empty

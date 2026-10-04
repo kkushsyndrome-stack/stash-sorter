@@ -71,6 +71,7 @@ class Item:
     page: int
     code: str = ""
     item_id: int = None
+    id_bit: int = None  # bit offset of the 32-bit item id inside raw (extended items)
     gfx: int = None  # picture variant (rings, amulets, charms, jewels)
     ilvl: int = 0
     quality: int = 2
@@ -254,6 +255,7 @@ def read_item(data, byte_pos, version, gd):
 
 def _read_complete(r, it, base, version, char_bits, gd, start_bit):
     it.n_children = r.read(3)
+    it.id_bit = r.pos - start_bit
     it.item_id = r.read(32)
     it.ilvl = r.read(7)
     it.quality = q = r.read(4)

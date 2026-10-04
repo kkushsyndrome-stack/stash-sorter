@@ -329,6 +329,99 @@ function renderAssess() {
   }));
 }
 
+// ---------------------------------------------------------------- session tracker
+let sessionTimer = null, sessionData = null;
+const dur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(x).padStart(2, "0")}s`; };
+const big = n => Math.abs(n) >= 1e9 ? (n / 1e9).toFixed(2) + "B" : Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.abs(n) >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(n);
+const signed = (n, f = big) => `<span class="${n > 0 ? "pos" : n < 0 ? "neg" : "muted"}">${n > 0 ? "+" : ""}${f(n)}</span>`;
+async function loadSession() {
+  sessionData = await api("/api/session");
+  renderSession();
+  clearInterval(sessionTimer);
+  if (sessionData.active) sessionTimer = setInterval(async () => {
+    if (!$("#session").classList.contains("active")) return;
+    const before = sessionData.active ? sessionData.active.runs.length : 0;
+    sessionData = await api("/api/session");
+    renderSession(sessionData.active && sessionData.active.runs.length !== before);
+  }, 3000);
+}
+function chip(f, left, grail) {
+  const it = { ...f, where: left ? "gone this run" : "found this run" };
+  const d = document.createElement("span"); d.className = "chip" + (left ? " left" : "");
+  d.innerHTML = `${f.art && S.art ? `<img src="${artUrl(f.art)}" alt="">` : ""}<span class="q-${esc(f.quality)}">${f.count > 1 ? f.count + "× " : ""}${esc(f.name)}</span>${grail ? '<span class="new">NEW</span>' : ""}`;
+  hoverable(d, it);
+  return d;
+}
+function renderRuns(sess, target) {
+  target.innerHTML = "";
+  const runs = [...sess.runs].reverse();
+  if (!runs.length) { target.innerHTML = `<div class="card muted">No games yet. Play, then <b>Save &amp; Exit</b> — each game shows up here a few seconds later.</div>`; return; }
+  for (const r of runs) {
+    const card = document.createElement("div"); card.className = "run" + (r.kind === "mule" ? " mule" : "");
+    const time = r.at.slice(11, 16);
+    card.innerHTML = `<div class="rh"><b>${r.kind === "run" ? `Run ${r.n}` : "Mule visit"}</b><span>${esc(r.characters.join(", "))}</span>
+      <span class="muted">${time} · ${dur(r.seconds)}</span>${r.xp ? `<span>XP ${signed(r.xp)}</span>` : ""}${r.levels ? `<span>${signed(r.levels, String)} level</span>` : ""}
+      ${r.gold ? `<span>gold ${signed(r.gold)}</span>` : ""}${r.found_hidden || r.left_hidden ? `<span class="muted small">potions/scrolls: +${r.found_hidden} / −${r.left_hidden}</span>` : ""}</div>`;
+    if (r.found.length || r.left.length) {
+      const chips = document.createElement("div"); chips.className = "chips";
+      r.found.forEach(f => chips.appendChild(chip(f, false, r.grail.includes(f.name))));
+      r.left.forEach(f => chips.appendChild(chip(f, true, false)));
+      card.appendChild(chips);
+    } else if (r.kind === "run") card.insertAdjacentHTML("beforeend", `<div class="small muted" style="margin-top:6px">Nothing new this game.</div>`);
+    target.appendChild(card);
+  }
+}
+function sessionTiles(sess, live) {
+  const t = sess.totals || {};
+  const tiles = [["Time", dur(t.seconds || 0)], ["Runs", t.runs || 0], ["Runs / hour", t.runs_per_hour || 0],
+    ["Average run", dur(t.avg_run_seconds || 0)], ["Items found", t.found || 0], ["New for collection", (t.grail || []).length],
+    ["XP gained", signed(t.xp || 0)], ["Gold", signed(t.gold || 0)]];
+  return `<div class="grid-cards">${tiles.map(([l, v]) => `<div class="stat"><div class="l">${l}</div><div class="v">${v}</div></div>`).join("")}</div>
+    ${(t.grail || []).length ? `<div class="notice ok"><b>New for your collection:</b> ${t.grail.map(esc).join(", ")}</div>` : ""}
+    ${(sess.notes || []).map(n => `<div class="notice">${esc(n)}</div>`).join("")}`;
+}
+function renderSession(newRun) {
+  const a = sessionData.active, top = $("#sessionTop");
+  if (a) {
+    top.innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0"><span class="live"></span>Session running since ${esc(a.started.slice(11, 16))}</h2>
+      <button class="btn danger" id="sessEnd">End session</button></div>
+      <p class="muted small">Leave Stash Sorter open while you play. Every <b>Save &amp; Exit</b> appears below a few seconds later: what you found, what's gone (sold, used, dropped), XP and gold. Moving items between characters isn't counted. Your saves are only read, never changed.</p>
+      ${sessionTiles(a, true)}</div>`;
+    $("#sessEnd").onclick = async () => { sessionData = await api("/api/session/end", {}); clearInterval(sessionTimer); renderSession(); };
+    renderRuns(a, $("#sessionRuns"));
+  } else {
+    top.innerHTML = `<div class="card"><h2>Session tracker</h2>
+      <p class="muted">Track what you find while you play: every <b>Save &amp; Exit</b> is logged as a run with your loot, items that left, XP, gold and run times. Leave Stash Sorter open in the background, play as normal, and end the session when you're done. Past sessions are kept below.</p>
+      <button class="btn primary" id="sessStart">Start session</button></div>`;
+    $("#sessStart").onclick = async () => {
+      $("#sessStart").disabled = true; $("#sessStart").textContent = "Reading your saves…";
+      try { await api("/api/session/start", {}); await loadSession(); }
+      catch (e) { top.insertAdjacentHTML("beforeend", `<div class="notice bad">${esc(e.message)}</div>`); }
+    };
+    $("#sessionRuns").innerHTML = "";
+  }
+  const h = sessionData.history;
+  $("#sessionHistory").innerHTML = h.length ? `<tr><th>Started</th><th>Length</th><th>Runs</th><th>Runs/h</th><th>Found</th><th>XP</th><th>Gold</th><th>Highlights</th><th></th></tr>` + h.map(x => {
+    const t = x.totals || {};
+    return `<tr><td class="small">${esc((x.started || "").replace("T", " ").slice(0, 16))}<div class="muted">${esc((x.characters || []).join(", "))}</div></td><td class="small">${dur(t.seconds || 0)}</td>
+      <td>${t.runs || 0}</td><td>${t.runs_per_hour || 0}</td><td>${t.found || 0}</td><td class="small">${signed(t.xp || 0)}</td><td class="small">${signed(t.gold || 0)}</td>
+      <td class="small">${(t.grail || []).length ? `<b style="color:var(--ok)">New: ${t.grail.slice(0, 3).map(esc).join(", ")}</b><br>` : ""}${(t.notable || []).slice(0, 4).map(esc).join(", ")}</td>
+      <td style="white-space:nowrap"><button class="btn small" data-sv="${esc(x.id)}">View</button> <button class="btn small" data-sd="${esc(x.id)}">Delete</button></td></tr>`;
+  }).join("") : `<tr><td class="muted">No finished sessions yet.</td></tr>`;
+  $$("[data-sv]").forEach(b => b.onclick = async () => {
+    const sess = await api(`/api/session/load?id=${encodeURIComponent(b.dataset.sv)}`);
+    modal(`<h2>Session of ${esc(sess.started.replace("T", " ").slice(0, 16))}</h2>${sessionTiles(sess)}<div id="mRuns"></div>
+      <div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">Close</button></div>`);
+    document.querySelector(".modal").style.maxWidth = "900px";
+    renderRuns(sess, $("#mRuns")); $("#mOk").onclick = () => { document.querySelector(".modal").style.maxWidth = ""; closeModal(); };
+  });
+  $$("[data-sd]").forEach(b => b.onclick = async () => {
+    if (!confirm("Delete this session from the history? (Your saves aren't affected.)")) return;
+    sessionData = await api("/api/session/delete", { id: b.dataset.sd }); renderSession();
+  });
+}
+
 // ---------------------------------------------------------------- clean up: duplicates & empty mules
 let dupGroups = null, dupPicked = new Set(), emptyList = [], emptyPicked = new Set();
 async function loadCleanup() {
@@ -464,6 +557,9 @@ function renderBanner() {
   if (S.journal) {
     b.innerHTML = `<div class="notice bad"><b>A previous change was interrupted.</b> Your saves may be half-updated. Roll back to the backup taken just before it: <button class="btn" id="recoverBtn">Roll back now</button></div>`;
     $("#recoverBtn").onclick = async () => { await api("/api/recover", {}); await refresh(); };
+  } else if (S.stale && S.stale.length) {
+    b.innerHTML = `<div class="notice">Your saves changed since Stash Sorter read them (you've been playing). <button class="btn small" id="staleReload">Reload saves</button> before sorting.</div>`;
+    $("#staleReload").onclick = () => $("#reloadBtn").click();
   } else if (S.errors.length) {
     b.innerHTML = `<div class="notice bad">Some files could not be read and will be left alone:<br>${S.errors.map(e => esc(e[0] + ": " + e[1])).join("<br>")}</div>`;
   } else b.innerHTML = "";
@@ -495,7 +591,7 @@ async function show(name) {
   $$("main section").forEach(s => s.classList.toggle("active", s.id === b.dataset.s));
   if (location.hash.slice(1).split("-")[0] !== b.dataset.s) history.replaceState(null, "", "#" + b.dataset.s);
   hideTip();
-  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup };
+  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup, session: loadSession };
   if (loaders[b.dataset.s]) await loaders[b.dataset.s]();
 }
 $$("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.s)));
