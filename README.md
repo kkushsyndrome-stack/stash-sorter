@@ -28,6 +28,14 @@ logged as a run: the loot you found (new holy-grail finds flagged), what left (s
 levels and gold gained, run times and runs per hour. Moving items between characters isn't counted as loot, and
 your saves are only read. Finished sessions are kept in a `sessions` folder next to the app for later.
 
+**Terror Zones:** in single-player/offline D2R the terror zone follows a fixed schedule based on your PC's
+clock. Pick a zone and Stash Sorter moves the Windows clock to its most recent session (Windows asks for
+permission each time; only that one step runs as administrator), then puts the real time back from
+`time.windows.com` when you click *Revert* or close Stash Sorter. Shows the zone active right now with immunities,
+boss packs and super uniques, what's coming up, and pins your favourite zones. Schedule from
+[d2emu.com](https://d2emu.com/tz-sp), cached for offline use. (This was the stand-alone D2R Terror Zone Clock;
+its favourites and saved schedule are picked up automatically.)
+
 **Look around:**
 - The game's own **item artwork** and **tooltips** ("+20% Faster Cast Rate", "Level 10 Life Tap (12/15 Charges)").
 - **Find**: search every character and stash by name, stat or location ("shako", "faster cast", "CharmMule").
@@ -90,6 +98,7 @@ download this folder, and double-click **`Stash Sorter.bat`** — or run `python
 3. **Sort & Distribute** — pick a mode, **Preview plan**, check where things go, then **Apply**.
    New to it? Set *Test run* to "Just 1 item" first.
 4. **Session** — start a session before you play; every Save & Exit shows up as a run.
+   **Terror Zones** — pick a zone, set the clock, revert when you're done.
 5. **Find**, **Collection**, **Item Levels** — browse and search.
 6. **Clean Up** — delete duplicate uniques/sets you don't need, and empty mules.
 7. **Sorting Rules** — change how items are categorised and what mules are called.
@@ -105,6 +114,7 @@ python -m stash_sorter apply --mode stash --rename new       # do it (asks for c
 python -m stash_sorter plan --mode migrate                   # old stash -> RotW stash
 python -m stash_sorter find harlequin                        # where is my Shako?
 python -m stash_sorter track                                 # session tracker in the terminal (Ctrl+C ends)
+python -m stash_sorter tz                                    # current and upcoming terror zones
 python -m stash_sorter dupes                                 # duplicate uniques/sets (with item keys)
 python -m stash_sorter delete-items KEY [KEY ...]            # delete chosen copies (asks first)
 python -m stash_sorter empty-mules                           # which mules are empty

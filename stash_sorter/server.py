@@ -12,10 +12,11 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
 from .apply import ApplyError
+from .clock import ClockError
 from .rules import RulesError
 
 WEB_DIR = Path(__file__).parent / "web"
-STATIC = {"app.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
+STATIC = {"app.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8", "tz-art.png": "image/png"}
 _ART_KEY = re.compile(r"^[a-z0-9_/\-]+$")
 
 
@@ -86,6 +87,7 @@ def serve(session, port=0, open_browser=True):
                         "/api/duplicates": lambda: session.duplicates(),
                         "/api/empty_mules": lambda: session.empty_mules(),
                         "/api/session": lambda: session.session_state(),
+                        "/api/tz": lambda: session.tz_state(),
                         "/api/session/load": lambda: session.session_load(q.get("id", "")),
                         "/api/backups": lambda: session.backups(),
                     }
@@ -109,6 +111,16 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, {"ok": True})
                     if path == "/api/plan":
                         return self._send(200, session.make_plan(body))
+                    if path == "/api/tz/update":
+                        return self._send(200, session.tz_update(body))
+                    if path == "/api/tz/set":
+                        return self._send(200, session.tz_set(body.get("zone", "")))
+                    if path == "/api/tz/revert":
+                        return self._send(200, session.tz_revert())
+                    if path == "/api/tz/refresh":
+                        return self._send(200, session.tz_refresh())
+                    if path == "/api/backup_now":
+                        return self._send(200, session.backup_now())
                     if path == "/api/session/start":
                         return self._send(200, session.session_start())
                     if path == "/api/session/end":
@@ -136,7 +148,7 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, session.save_rules(body.get("rules")))
                     if path == "/api/rules/reset":
                         return self._send(200, session.reset_rules())
-            except (ApplyError, RulesError, ValueError) as e:
+            except (ApplyError, RulesError, ValueError, ClockError) as e:
                 return self._send(409, {"error": str(e)})
             except Exception as e:
                 traceback.print_exc()
@@ -158,9 +170,37 @@ def serve(session, port=0, open_browser=True):
     print(f"Stash Sorter is running at {url}  (close this window or press Ctrl+C to stop)")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+    _on_console_close(lambda: session.revert_clock_on_exit())
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
         httpd.server_close()
+        if session.clock.shifted and session.clock.settings.get("auto_revert", True):
+            print("Restoring the real time (Windows will ask for permission)...")
+            ok = session.revert_clock_on_exit()
+            print("Done." if ok else "The clock couldn't be restored - fix it in Windows settings.")
+
+
+_handler_ref = []
+
+
+def _on_console_close(callback):
+    """Run `callback` when the console window is closed (best effort: Windows allows a few seconds)."""
+    try:
+        import ctypes
+        handler_type = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
+
+        def handler(event):
+            if event in (2, 5, 6):  # close, logoff, shutdown
+                try:
+                    callback()
+                except Exception:
+                    pass
+                return 1
+            return 0
+        _handler_ref.append(handler_type(handler))  # keep it alive
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler_ref[-1], 1)
+    except (AttributeError, OSError):
+        pass

@@ -216,6 +216,30 @@ def cmd_track(args):
               f"{tot['found']} items found, XP {tot['xp']:+,}, gold {tot['gold']:+,}")
 
 
+def cmd_tz(args):
+    from .clock import TerrorClock, ClockError
+    tc = TerrorClock()
+    tc.measure_offset()
+    try:
+        tc.load_schedule()
+    except ClockError as e:
+        print(e)
+        sys.exit(1)
+    print(f"Schedule {tc.source}. " + (f"Your PC clock is off by {tc.offset}." if tc.shifted else "Your PC clock is right."))
+    for s in tc.upcoming(args.count):
+        start = s["start"].astimezone().strftime("%a %H:%M")
+        imm = ", ".join(s["immunities"]) or "none"
+        print(f"{start}  {s['zone'][:70]:70s} immunities: {imm}")
+
+
+def cmd_set_clock(args):
+    """Elevated helper started by the Terror Zones tab (Windows asks for permission first)."""
+    from .clock import helper_main
+    real = float(args.real_epoch) if args.real_epoch else None
+    system = float(args.system_epoch) if args.system_epoch else None
+    sys.exit(helper_main(args.when, real, system))
+
+
 def cmd_backups(args):
     s = _session(args)
     for b in s.backups():
@@ -325,6 +349,14 @@ def main(argv=None):
     p.add_argument("query", nargs="+")
     p.set_defaults(func=cmd_find)
     sub.add_parser("track", help="session tracker in the terminal: logs every Save & Exit").set_defaults(func=cmd_track)
+    p = sub.add_parser("tz", help="current and upcoming terror zones (offline schedule)")
+    p.add_argument("--count", type=int, default=8)
+    p.set_defaults(func=cmd_tz)
+    p = sub.add_parser("set-clock", help="(used by the Terror Zones tab; needs administrator rights)")
+    p.add_argument("when", help="local time YYYY-MM-DDTHH:MM:SS, or 'real'")
+    p.add_argument("real_epoch", nargs="?")
+    p.add_argument("system_epoch", nargs="?")
+    p.set_defaults(func=cmd_set_clock)
     sub.add_parser("dupes", help="list unique and set items you have more than once").set_defaults(func=cmd_dupes)
     p = sub.add_parser("delete-items", help="delete items by key (see `dupes`); backed up and undoable")
     p.add_argument("keys", nargs="+")

@@ -329,6 +329,83 @@ function renderAssess() {
   }));
 }
 
+// ---------------------------------------------------------------- terror zone clock
+let TZ = null, tzTimer = null;
+const span = ms => { const m = Math.max(0, Math.floor(ms / 60000)); if (m < 1) return "under a minute";
+  if (m < 60) return `${m}m`; if (m < 1440) return `${Math.floor(m / 60)}h ${m % 60}m`; return `${Math.floor(m / 1440)}d ${Math.floor(m % 1440 / 60)}h`; };
+const localTime = iso => new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+const shortTime = iso => new Date(iso).toLocaleTimeString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+const immunities = s => s.immunities.length ? s.immunities.map(i => `<span class="imm ${esc(i)}">${esc(i)}</span>`).join("") : '<span class="muted small">no immunities</span>';
+async function loadTz(force) {
+  if (force) $("#tzStatus").textContent = "Loading the terror zone schedule…";
+  try { TZ = await api(force === "refresh" ? "/api/tz/refresh" : "/api/tz", force === "refresh" ? {} : undefined); }
+  catch (e) { $("#tzStatus").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; return; }
+  renderTz();
+  clearInterval(tzTimer);
+  tzTimer = setInterval(async () => { if ($("#tz").classList.contains("active")) { TZ = await api("/api/tz"); renderTz(); } }, 15000);
+}
+function renderTz() {
+  const sel = $("#tzZone");
+  sel.innerHTML = TZ.zones.map(z => `<option value="${esc(z)}">${TZ.favourites.includes(z) ? "★ " : ""}${esc(z)}</option>`).join("");
+  sel.value = TZ.zone;
+  $("#tzFav").textContent = TZ.favourites.includes(TZ.zone) ? "★" : "☆";
+  $("#tzAuto").checked = TZ.auto_revert;
+  const real = new Date(TZ.real_now).getTime(), len = TZ.session_minutes * 60000, p = TZ.picked;
+  if (!p) {
+    $("#tzSession").innerHTML = `<div class="tzcap">NO SESSION</div><div class="tztime">–</div><div class="small muted">${TZ.loaded ? "This zone isn't in the current schedule." : "No schedule loaded."}</div>`;
+  } else {
+    const start = new Date(p.start).getTime();
+    const cap = { active: "ACTIVE NOW", last: "LAST SESSION", next: "NEXT SESSION" }[TZ.picked_state];
+    const rel = TZ.picked_state === "next" ? `Starts in ${span(start - real)}` : TZ.picked_state === "active"
+      ? `Started ${span(real - start)} ago, ends in ${span(start + len - real)}` : `Started ${span(real - start)} ago`;
+    $("#tzSession").innerHTML = `<div class="tzcap ${TZ.picked_state === "active" ? "active" : ""}">${cap}</div><div class="tztime">${esc(localTime(p.start))}</div>
+      <div class="small muted">${rel}</div><div style="margin-top:6px">${immunities(p)}</div>`;
+  }
+  $("#tzSet").disabled = !p;
+  const pc = new Date(TZ.pc_now);
+  $("#tzStatus").innerHTML = (TZ.loaded ? `Schedule ${esc(TZ.source)} (${TZ.count} sessions). ` : "") +
+    (TZ.shifted ? `<b style="color:var(--warn)">Your PC clock is set to ${esc(pc.toLocaleString())}, ${span(Math.abs(TZ.offset_seconds) * 1000)} ${TZ.offset_seconds > 0 ? "behind" : "ahead of"} real time.</b> Times shown use the real time.`
+      : TZ.offset_known ? "Your PC clock matches the real time." : "Couldn't reach time.windows.com to check your clock.");
+  const cur = TZ.current;
+  $("#tzNow").innerHTML = cur ? `<div class="tztime" style="font-size:20px">${esc(cur.zone)}</div>
+    <div class="small muted">Ends in ${span(new Date(cur.start).getTime() + len - real)} (real time)</div>
+    <div style="margin-top:8px">${immunities(cur)}</div>
+    <div class="small" style="margin-top:8px">Boss packs: ${esc(cur.boss_packs.join("–") || "?")}${cur.superuniques.length ? ` · Super uniques: ${cur.superuniques.map(esc).join(", ")}` : ""}</div>`
+    : `<div class="muted">${TZ.loaded ? "No session at this moment in the schedule." : "No schedule loaded yet."}</div>`;
+  $("#tzNext").innerHTML = `<table class="tzlist">${TZ.upcoming.filter(s => !cur || s.start !== cur.start).slice(0, 8).map(s =>
+    `<tr class="${TZ.favourites.includes(s.zone) ? "fav" : ""}"><td class="small" style="white-space:nowrap">${esc(shortTime(s.start))}</td><td>${esc(s.zone)}<div>${immunities(s)}</div></td></tr>`).join("")}</table>`;
+}
+async function tzUpdate(body) { TZ = await api("/api/tz/update", body); renderTz(); }
+$("#tzZone").onchange = () => tzUpdate({ zone: $("#tzZone").value });
+$("#tzFav").onclick = () => tzUpdate({ favourite: $("#tzZone").value });
+$("#tzAuto").onchange = () => tzUpdate({ auto_revert: $("#tzAuto").checked });
+$("#tzBackup").onclick = async () => {
+  $("#tzBackup").disabled = true; $("#tzBackupMsg").textContent = "Backing up…";
+  try { const r = await api("/api/backup_now", {}); $("#tzBackupMsg").innerHTML = `Saved <span class="mono">${esc(r.backup.split(/[\\/]/).pop())}</span> (see Backups).`; tzBackedUp = true; }
+  catch (e) { $("#tzBackupMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+  $("#tzBackup").disabled = false;
+};
+let tzBackedUp = false;
+$("#tzSet").onclick = () => {
+  const p = TZ.picked;
+  modal(`<h2>Set the Windows clock?</h2><p>To <b>${esc(localTime(p.start))}</b><br><span class="muted">${esc(p.zone)}</span></p>
+    <div class="notice">Windows will ask for permission (the clock can only be changed as administrator). While the clock is moved, websites may show certificate errors.
+    ${TZ.auto_revert ? "The real time is put back when you close Stash Sorter." : "Use <b>Revert to real time</b> when you've finished playing."}</div>
+    ${tzBackedUp ? "" : `<div class="notice">You haven't backed up your saves in this tab yet — <b>Back up saves</b> first if you want a copy.</div>`}
+    <div class="row" style="justify-content:flex-end"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo">Set clock</button></div>`);
+  $("#mCancel").onclick = closeModal;
+  $("#mGo").onclick = async () => {
+    $("#mGo").disabled = true; $("#mGo").textContent = "Waiting for Windows…";
+    try { TZ = await api("/api/tz/set", { zone: p.zone }); closeModal(); renderTz(); await refresh(); }
+    catch (e) { modal(`<h2>Clock not changed</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`); $("#mOk").onclick = closeModal; }
+  };
+};
+async function tzRevert() {
+  try { TZ = await api("/api/tz/revert", {}); if ($("#tz").classList.contains("active")) renderTz(); await refresh(); }
+  catch (e) { modal(`<h2>Clock not restored</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`); $("#mOk").onclick = closeModal; }
+}
+$("#tzRevert").onclick = tzRevert;
+
 // ---------------------------------------------------------------- session tracker
 let sessionTimer = null, sessionData = null;
 const dur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
@@ -554,6 +631,7 @@ async function loadBackups() {
 // ---------------------------------------------------------------- wiring
 function renderBanner() {
   const b = $("#banner");
+  const clock = S.clock_shift ? `<div class="notice"><b>Your PC clock is moved ${span(Math.abs(S.clock_shift) * 1000)} ${S.clock_shift > 0 ? "back" : "forward"} for terror zones.</b> <button class="btn small" id="bannerRevert">Revert to real time</button></div>` : "";
   if (S.journal) {
     b.innerHTML = `<div class="notice bad"><b>A previous change was interrupted.</b> Your saves may be half-updated. Roll back to the backup taken just before it: <button class="btn" id="recoverBtn">Roll back now</button></div>`;
     $("#recoverBtn").onclick = async () => { await api("/api/recover", {}); await refresh(); };
@@ -563,6 +641,7 @@ function renderBanner() {
   } else if (S.errors.length) {
     b.innerHTML = `<div class="notice bad">Some files could not be read and will be left alone:<br>${S.errors.map(e => esc(e[0] + ": " + e[1])).join("<br>")}</div>`;
   } else b.innerHTML = "";
+  if (clock) { b.insertAdjacentHTML("afterbegin", clock); $("#bannerRevert").onclick = tzRevert; }
 }
 async function refresh() {
   S = await api("/api/state");
@@ -591,7 +670,7 @@ async function show(name) {
   $$("main section").forEach(s => s.classList.toggle("active", s.id === b.dataset.s));
   if (location.hash.slice(1).split("-")[0] !== b.dataset.s) history.replaceState(null, "", "#" + b.dataset.s);
   hideTip();
-  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup, session: loadSession };
+  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup, session: loadSession, tz: () => loadTz(!TZ) };
   if (loaders[b.dataset.s]) await loaders[b.dataset.s]();
 }
 $$("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.s)));

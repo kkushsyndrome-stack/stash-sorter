@@ -11,7 +11,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 "Se
 header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
 header h1 { font-size: 18px; margin: 0; color: var(--accent); letter-spacing: .5px; font-family: Georgia, serif; }
 nav { display: flex; gap: 4px; flex-wrap: wrap; }
-nav button { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 6px 11px; border-radius: 6px; cursor: pointer; font: inherit; }
+nav button { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 5px 8px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 13.5px; }
 nav button.active { color: var(--text); border-color: var(--line); background: var(--panel-2); }
 nav button:hover { color: var(--text); }
 .status { margin-left: auto; display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }
@@ -117,4 +117,18 @@ td input[type=text] { width: 100%; min-width: 120px; padding: 4px 6px; }
 .live { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); margin-right: 6px; animation: pulse 1.6s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 .pos { color: var(--ok); } .neg { color: var(--danger); }
+.tzhero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); gap: 16px; margin-bottom: 16px; }
+.tzart { position: relative; min-height: 360px; border-radius: var(--radius); border: 1px solid var(--line);
+  background: #1a0f0b url("/static/tz-art.png") center / cover no-repeat; image-rendering: pixelated; overflow: hidden; }
+.tztitle { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); padding: 6px 22px; font-family: Georgia, serif;
+  font-weight: 700; letter-spacing: 1px; color: #f3dca0; background: #2a120ccc; border: 2px solid #c8a45d; border-radius: 8px; white-space: nowrap; }
+.tzpanel { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.tzcap { margin-top: 14px; font-size: 12px; letter-spacing: .5px; color: var(--muted); } .tzcap.active { color: var(--ok); font-weight: 600; }
+.tztime { font-family: Georgia, serif; font-size: 26px; font-weight: 700; color: #f3dca0; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.imm { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; margin: 2px 4px 2px 0; border: 1px solid currentColor; }
+.imm.Cold { color: #7fb8ff; } .imm.Fire { color: #ff7b52; } .imm.Lightning { color: #f2e05a; } .imm.Poison { color: #6fd36f; }
+.imm.Magic { color: #d38cff; } .imm.Physical { color: #d9d4cb; }
+.tzlist { width: 100%; } .tzlist td { padding: 6px 6px; } .tzlist tr.fav td:first-child::before { content: "★ "; color: var(--accent); }
+@media (max-width: 900px) { .tzhero { grid-template-columns: 1fr; } .tzart { min-height: 220px; } }
 @media (max-width: 640px) { main { padding: 12px; } :root { --cell: 26px; } .status { margin-left: 0; } .mule-cards { grid-template-columns: 1fr; } }

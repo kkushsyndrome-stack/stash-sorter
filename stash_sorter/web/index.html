@@ -14,6 +14,7 @@
     <button data-s="stash">Shared Stash</button>
     <button data-s="sort">Sort &amp; Distribute</button>
     <button data-s="session">Session</button>
+    <button data-s="tz">Terror Zones</button>
     <button data-s="find">Find</button>
     <button data-s="grail">Collection</button>
     <button data-s="assess">Item Levels</button>
@@ -86,6 +87,25 @@
     <div id="sessionTop"></div>
     <div id="sessionRuns"></div>
     <div class="card"><h2>Past sessions</h2><div class="table-wrap"><table id="sessionHistory"></table></div></div>
+  </section>
+
+  <section id="tz">
+    <div class="tzhero">
+      <div class="tzart"><div class="tztitle">Terror Zone Clock</div></div>
+      <div class="tzpanel card">
+        <label class="small muted">TERROR ZONE</label>
+        <div class="row" style="flex-wrap:nowrap;gap:6px"><select id="tzZone" style="flex:1;min-width:0"></select><button class="btn" id="tzFav" title="Favourite">☆</button></div>
+        <div id="tzSession"></div>
+        <div class="row" style="margin-top:12px"><button class="btn danger" id="tzSet">Set clock to this session</button><button class="btn" id="tzRevert">Revert to real time</button></div>
+        <label class="check" style="margin-top:10px"><input type="checkbox" id="tzAuto"> Restore real time when Stash Sorter closes</label>
+        <div class="row" style="margin-top:10px"><button class="btn" id="tzBackup">Back up saves</button><span class="small muted" id="tzBackupMsg">Zips your D2R save folder, just in case.</span></div>
+        <div class="small" id="tzStatus" style="margin-top:12px"></div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h2>Right now</h2><div id="tzNow"></div></div>
+      <div class="card"><h2>Coming up</h2><div id="tzNext"></div></div>
+    </div>
   </section>
 
   <section id="find">

@@ -128,8 +128,13 @@ def _totals(snap):
 
 
 class Tracker:
-    def __init__(self, save_dir, gd, names, store_dir, describe):
+    def _now(self):
+        return self.now().isoformat(timespec="seconds")
+
+    def __init__(self, save_dir, gd, names, store_dir, describe, now=None):
         self.gd, self.names = gd, names
+        self.now = now or dt.datetime.now  # real local time (the PC clock may be moved for terror zones)
+        self.last_mono = time.monotonic()
         self.snapshotter = Snapshotter(save_dir, gd)
         self.store = Path(store_dir)
         self.describe = describe  # item -> dict for display
@@ -161,7 +166,7 @@ class Tracker:
             if not s.get("ended"):
                 self.session = s
                 s.setdefault("notes", []).append(
-                    f"{_now()}: resumed after Stash Sorter was closed; games played meanwhile aren't counted.")
+                    f"{self._now()}: resumed after Stash Sorter was closed; games played meanwhile aren't counted.")
                 self._baseline()
                 self._save()
                 return
@@ -207,8 +212,9 @@ class Tracker:
     def start(self):
         if self.session:
             return self.session
-        self.session = {"id": dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
-                        "started": _now(), "ended": None, "runs": [], "notes": [], "characters": [],
+        self.last_mono = time.monotonic()
+        self.session = {"id": self.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
+                        "started": self._now(), "ended": None, "runs": [], "notes": [], "characters": [],
                         "totals": {}}
         self._baseline()
         self._update_totals()
@@ -219,7 +225,7 @@ class Tracker:
         if not self.session:
             return None
         self.poll(force=True)
-        self.session["ended"] = _now()
+        self.session["ended"] = self._now()
         self._update_totals()
         self._save()
         done, self.session = self.session, None
@@ -300,14 +306,17 @@ class Tracker:
                 self.known_grail.add(gk)
                 grail.append(gk)
         runs = [r for r in self.session["runs"] if r["kind"] == "run"]
-        prev = runs[-1]["at"] if runs else self.session["started"]
         kind = "run" if played else "mule"
+        # run lengths use a steady timer, so moving the PC clock for terror zones doesn't distort them
+        seconds = int(time.monotonic() - self.last_mono)
+        if kind == "run":
+            self.last_mono = time.monotonic()
         for name in played:
             if name not in self.session["characters"]:
                 self.session["characters"].append(name)
         return {
-            "n": len(runs) + 1 if kind == "run" else None, "kind": kind, "at": _now(),
-            "seconds": int((dt.datetime.fromisoformat(_now()) - dt.datetime.fromisoformat(prev)).total_seconds()),
+            "n": len(runs) + 1 if kind == "run" else None, "kind": kind, "at": self._now(),
+            "seconds": seconds,
             "characters": played or mules, "xp": xp, "levels": levels, "gold": gold,
             "found": found, "found_hidden": found_hidden, "left": left, "left_hidden": left_hidden,
             "grail": [self._grail_name(g) for g in grail], "grail_keys": [list(g) for g in grail],
@@ -320,7 +329,7 @@ class Tracker:
     def _update_totals(self):
         s = self.session
         runs = [r for r in s["runs"] if r["kind"] == "run"]
-        end = s["ended"] or _now()
+        end = s["ended"] or self._now()
         seconds = max(1, int((dt.datetime.fromisoformat(end) - dt.datetime.fromisoformat(s["started"])).total_seconds()))
         notable = [f for r in runs for f in r["found"]
                    if f.get("quality") in ("unique", "set", "runeword") or f.get("category") == "runes"]
@@ -335,7 +344,3 @@ class Tracker:
             "xp": sum(r["xp"] for r in s["runs"]), "levels": sum(r["levels"] for r in s["runs"]),
             "gold": sum(r["gold"] for r in s["runs"]),
         }
-
-
-def _now():
-    return dt.datetime.now().isoformat(timespec="seconds")

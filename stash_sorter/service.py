@@ -11,6 +11,7 @@ from .describe import Describer
 from .items import MODE_STORED, MODE_EQUIPPED, MODE_BELT, PAGE_INVENTORY, PAGE_STASH, PAGE_CUBE
 from .rules import Ruleset, load_default_rules, validate, RulesError
 from .tracker import Tracker
+from .clock import TerrorClock, ClockError
 from .savefiles import TAB_NORMAL, TAB_STACKABLES, empty_status
 from .world import find_save_dir, load_world, mule_status
 
@@ -31,8 +32,11 @@ class Session:
         self.plan_id = 0
         self.reload()
         self.crafter_level = self.max_char_level()
+        self.clock = TerrorClock()
+        self.clock_checked = False
         self.tracker = Tracker(self.save_dir, self.gd, self.world.names,
-                               Path(sessions) if sessions else paths.app_dir() / "sessions", self._describe_found)
+                               Path(sessions) if sessions else paths.app_dir() / "sessions", self._describe_found,
+                               now=self.clock.real_local)
 
     # ---------- loading
     def reload(self):
@@ -109,6 +113,7 @@ class Session:
                 "blocked": not mule_status(c, stash, 99)[0] if stash else True,
             })
         return {
+            "clock_shift": int(self.clock.offset.total_seconds()) if self.clock.shifted else 0,
             "save_dir": str(self.save_dir), "data_source": self.gd.source,
             "backup_dir": str(self.backup_dir), "game_running": applier.game_running(),
             "default_stash": stash.path.name if stash else None, "art": self.art.available,
@@ -332,6 +337,79 @@ class Session:
             "mules": [vars(m) for m in p.mules], "skipped": p.skipped_chars, "labels": p.labels,
             "files_touched": len(files) + len(p.renames) + len(p.new_mules),
         }
+
+    # ---------- terror zone clock
+    def _tz_ready(self):
+        if not self.clock_checked:
+            self.clock.measure_offset()
+            try:
+                self.clock.load_schedule()
+            except ClockError:
+                pass
+            self.clock_checked = True
+
+    def tz_state(self):
+        self._tz_ready()
+        c = self.clock
+        zone = c.settings.get("zone") or c.zones()[0]
+
+        def sess(s):
+            return s and {"start": s["start"].isoformat(), "zone": s["zone"], "immunities": s["immunities"],
+                          "boss_packs": s["boss_packs"], "superuniques": s["superuniques"]}
+
+        picked, state = c.zone_session(zone)
+        cur = c.current()
+        return {
+            "loaded": bool(c.sessions), "source": c.source, "count": len(c.sessions),
+            "session_minutes": int(c.session_length.total_seconds() // 60),
+            "real_now": c.real_utc().isoformat(), "pc_now": c.system_utc().isoformat(),
+            "shifted": c.shifted, "offset_seconds": int(c.offset.total_seconds()), "offset_known": c.offset_known,
+            "zones": c.zones(), "favourites": c.settings.get("favourites", []), "zone": zone,
+            "auto_revert": c.settings.get("auto_revert", True),
+            "picked": sess(picked), "picked_state": state,
+            "current": sess(c.sessions[cur]) if cur is not None else None,
+            "upcoming": [sess(s) for s in c.upcoming(10)],
+        }
+
+    def tz_update(self, body):
+        c = self.clock
+        if "zone" in body:
+            c.settings["zone"] = body["zone"]
+        if "favourite" in body:
+            fav = c.settings.setdefault("favourites", [])
+            z = body["favourite"]
+            fav.remove(z) if z in fav else fav.append(z)
+        if "auto_revert" in body:
+            c.settings["auto_revert"] = bool(body["auto_revert"])
+        c.save_settings()
+        return self.tz_state()
+
+    def tz_set(self, zone):
+        self._tz_ready()
+        s = self.clock.set_to(zone)
+        return {"zone": s["zone"], "start": s["start"].isoformat(), **self.tz_state()}
+
+    def tz_revert(self):
+        ok = self.clock.revert()
+        return {"restored": ok, **self.tz_state()}
+
+    def tz_refresh(self):
+        self.clock_checked = False
+        return self.tz_state()
+
+    def revert_clock_on_exit(self):
+        """Called when Stash Sorter closes: put the real time back if the user asked for that."""
+        c = self.clock
+        if c.shifted and c.settings.get("auto_revert", True):
+            try:
+                c.revert()
+                return True
+            except ClockError:
+                return False
+        return None
+
+    def backup_now(self):
+        return {"backup": str(applier.backup_save_dir(self.save_dir, self.backup_dir, label="manual"))}
 
     # ---------- session tracker
     def _describe_found(self, it):
