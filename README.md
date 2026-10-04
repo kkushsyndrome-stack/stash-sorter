@@ -59,8 +59,10 @@ Still: keep your own backups too, and use at your own risk. Only for offline cha
 
 ## Getting started
 
-**Easiest:** download `StashSorter.exe`, close Diablo II: Resurrected completely, and double-click it. Your browser
-opens the app. (Backups and your rules are kept next to the exe.)
+**Easiest:** download `StashSorter.exe` from the [latest release](https://github.com/kkushsyndrome-stack/stash-sorter/releases/latest),
+put it in a folder of its own, close Diablo II: Resurrected completely, and double-click it. Your browser opens the
+app. (Backups and your rules are kept next to the exe.) Windows may warn about an unrecognised app because the exe
+isn't code-signed: choose *More info → Run anyway*, or run from source instead.
 
 **From source:** install [Python 3.9+](https://www.python.org/downloads/) (tick *Add python.exe to PATH*),
 download this folder, and double-click **`Stash Sorter.bat`** — or run `python -m stash_sorter`.
@@ -126,6 +128,11 @@ Layout: `bits.py` (bit I/O) · `items.py` (item format) · `savefiles.py` (.d2s/
 `describe.py` (tooltips) · `art.py` (sprites) · `catalog.py` (names) · `assessor.py` (item levels) · `rules.py`
 (categories) · `planner.py` (where things go) · `apply.py` (the only module that writes) · `service.py` /
 `server.py` / `web/` (GUI) · `cli.py`.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The sample saves in `tests/fixtures/hlb` are from Horadric Loot Box (MIT, licence
+included there).
 
 ## Credits
 
