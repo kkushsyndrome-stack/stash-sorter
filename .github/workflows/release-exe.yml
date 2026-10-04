@@ -1,0 +1,45 @@
+# Builds StashSorter.exe on Windows and attaches it (plus its SHA-256) to a GitHub release.
+# Runs when a release is published; run it by hand (Actions -> Release exe -> Run workflow) to rebuild one.
+name: Release exe
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the exe to, e.g. v0.6.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests
+        run: python -m unittest discover -s tests
+      - name: Build StashSorter.exe
+        run: python tools/build_exe.py
+      - name: Check the exe starts and has the release's version
+        run: |
+          out=$(dist/StashSorter.exe --version)
+          echo "$out"
+          [ "$out" = "Stash Sorter ${TAG#v}" ]
+      - name: Checksum
+        run: cd dist && sha256sum -b StashSorter.exe > StashSorter.exe.sha256 && cat StashSorter.exe.sha256
+      - name: Attach to the release
+        run: gh release upload "$TAG" dist/StashSorter.exe dist/StashSorter.exe.sha256 --clobber --repo "$GITHUB_REPOSITORY"
