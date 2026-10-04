@@ -11,6 +11,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
+from . import __version__
 from .apply import ApplyError
 from .clock import ClockError
 from .launcher import LaunchError
@@ -52,7 +53,7 @@ def serve(session, port=0, open_browser=True):
             url = urlparse(self.path)
             path = url.path
             if path in ("/", "/index.html"):
-                html = (WEB_DIR / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
+                html = (WEB_DIR / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token).replace("__VERSION__", __version__)
                 return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             if path.startswith("/static/") and path[8:] in STATIC:
                 return self._send(200, (WEB_DIR / path[8:]).read_bytes(), STATIC[path[8:]])
@@ -193,7 +194,7 @@ def serve(session, port=0, open_browser=True):
     threading.Thread(target=watch, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
-    print(f"Stash Sorter is running at {url}  (close this window or press Ctrl+C to stop)")
+    print(f"Stash Sorter {__version__} is running at {url}  (close this window or press Ctrl+C to stop)")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     _on_console_close(lambda: session.revert_clock_on_exit())
