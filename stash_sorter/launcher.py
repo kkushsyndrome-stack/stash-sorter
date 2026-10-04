@@ -20,6 +20,7 @@ from pathlib import Path
 GAME_CODE = "osi"
 KEY = "AdditionalLaunchArguments"
 MAX_SEED = 4294967295
+BATTLENET_PROCESS, GAME_PROCESS = "battle.net.exe", "d2r.exe"
 DEFAULT_BATTLENET = [r"C:\Program Files (x86)\Battle.net\Battle.net.exe", r"C:\Program Files\Battle.net\Battle.net.exe"]
 
 # switches the panel understands; anything else is kept as "other arguments"
@@ -57,15 +58,20 @@ def battlenet_exe():
     return next((Path(p) for p in DEFAULT_BATTLENET if Path(p).is_file()), None)
 
 
-def battlenet_running():
+def running_processes():
+    """Lower-case image names of the running programs (empty off Windows or if tasklist fails)."""
     if sys.platform != "win32":
-        return False
+        return set()
     try:
         out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=15,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.lower()
     except (OSError, subprocess.SubprocessError):
-        return False
-    return '"battle.net.exe"' in out
+        return set()
+    return {line.split('","')[0].strip('"') for line in out.splitlines() if line.startswith('"')}
+
+
+def battlenet_running():
+    return BATTLENET_PROCESS in running_processes()
 
 
 # ---------------------------------------------------------------------------------------------- arguments
@@ -129,6 +135,25 @@ def build_args(flags=(), seed=None, mod=None, other=""):
     if other and other.strip():
         parts.append(other.strip())
     return " ".join(parts)
+
+
+def strip_seed(text):
+    """The argument string without -seed and its value (anything else is kept exactly as typed)."""
+    try:
+        tokens = shlex.split(text or "", posix=False)
+    except ValueError:
+        tokens = (text or "").split()
+    kept, i = [], 0
+    while i < len(tokens):
+        if tokens[i].lower() != "-seed":
+            kept.append(tokens[i])
+        elif i + 1 < len(tokens) and tokens[i + 1].isdigit():
+            i += 1
+        else:  # a non-number value (e.g. a leftover placeholder): drop everything up to the next switch
+            while i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+                i += 1
+        i += 1
+    return " ".join(kept)
 
 
 def list_mods(install_dir):
@@ -308,3 +333,173 @@ def launch_d2r():
         raise LaunchError("Battle.net isn't installed in the usual place.")
     subprocess.Popen([str(exe), f"--exec=launch {GAME_CODE.upper()}"], close_fds=True,
                      creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+
+
+# ---------------------------------------------------------------------------------------------- seed run
+STAGES = {
+    "wait_closed": "Close Battle.net so the seed can be put in",
+    "starting": "Starting D2R with the seed",
+    "playing": "Play one game with the seed",
+    "wait_closed_after": "Close Battle.net so the seed can be taken off",
+    "done": "Finished",
+    "cancelled": "Cancelled",
+}
+FINAL = ("done", "cancelled")
+GIVE_UP_STARTING = 90  # seconds after launching with neither Battle.net nor D2R running: it was closed
+
+
+class SeedRun:
+    """Start D2R once with -seed N so the character's offline map is made from that seed, then take -seed off
+    and start the game again normally. Leaving -seed in makes the game's random numbers predictable; the map
+    stays because offline characters keep their map.
+
+    Battle.net only reads its settings when it starts and writes its own copy back when it exits, so it has to be
+    fully closed before each change: wait_closed -> starting -> playing -> wait_closed_after -> done.
+    tick() looks at what is running and moves on. The run is kept in a file, so one that didn't finish (app closed,
+    PC restarted) carries on the next time and -seed is never left behind.
+    """
+
+    def __init__(self, path, saves_dir=None, processes=running_processes, config=None, launch=None,
+                 backup_dir=None, now=time.time):
+        self.path = Path(path)
+        self.saves_dir = Path(saves_dir) if saves_dir else None
+        self.processes = processes
+        self.config = config  # Battle.net settings file (None = the real one)
+        self.launch = launch or launch_d2r
+        self.backup_dir = backup_dir
+        self.now = now
+        self.state = None
+        if self.path.is_file():
+            try:
+                st = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(st, dict) and st.get("stage") in STAGES:
+                    self.state = st
+            except (OSError, ValueError):
+                pass
+
+    @property
+    def active(self):
+        return bool(self.state) and self.state["stage"] not in FINAL
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.state, indent=1), encoding="utf-8")
+        os.replace(tmp, self.path)
+
+    def _stage(self, stage, note=None):
+        self.state["stage"] = stage
+        self.state["since"] = self.now()
+        self.state["error"] = None
+        if note:
+            self.state["notes"].append(note)
+        self._save()
+
+    def _snapshot(self):
+        if not self.saves_dir or not self.saves_dir.is_dir():
+            return {}
+        return {p.stem: p.stat().st_mtime_ns for p in self.saves_dir.glob("*.d2s")}
+
+    def start(self, seed, seed_id=None):
+        if self.active:
+            raise LaunchError("A seed run is already going; finish or cancel it first.")
+        try:
+            seed = int(str(seed).strip())
+        except ValueError:
+            raise LaunchError("The seed must be a whole number.") from None
+        if not 0 <= seed <= MAX_SEED:
+            raise LaunchError(f"The seed must be between 0 and {MAX_SEED}.")
+        if self.launch is launch_d2r and battlenet_exe() is None:
+            raise LaunchError("Battle.net isn't installed in the usual place, so D2R can't be started.")
+        base = strip_seed(read_args(self.config))
+        if "-resetofflinemaps" in base.lower().split():
+            raise LaunchError("Untick -resetofflinemaps and save first: with it the game makes a new map every game, "
+                              "so the seeded map wouldn't stay.")
+        self.state = {"seed": seed, "seed_id": seed_id, "base": base, "seeded": f"{base} -seed {seed}".strip(),
+                      "relaunch": True, "stage": "wait_closed", "started": self.now(), "since": self.now(),
+                      "launched": None, "snapshot": {}, "changed": None, "error": None, "notes": []}
+        self._save()
+        return self.tick()
+
+    def tick(self):
+        """Look at what's running and move on as far as possible. Returns the state."""
+        if not self.active:
+            return self.state
+        st = self.state
+        try:
+            running = self.processes()
+            bnet, game = BATTLENET_PROCESS in running, GAME_PROCESS in running
+            if st["stage"] == "wait_closed" and not bnet and not game:
+                write_args(st["seeded"], self._backups(), path=self.config, check_running=False)
+                st["snapshot"] = self._snapshot()
+                st["launched"] = self.now()
+                self._stage("starting", f"Battle.net now starts D2R with: {st['seeded']}")
+                self._launch()
+            elif st["stage"] == "starting":
+                if game:
+                    self._stage("playing")
+                elif not bnet and self.now() - st["launched"] > GIVE_UP_STARTING:
+                    st["relaunch"] = False
+                    self._stage("wait_closed_after", "Battle.net closed before D2R started.")
+            if st["stage"] == "playing" and not game:
+                before = st["snapshot"]
+                st["changed"] = sorted(n for n, m in self._snapshot().items() if before.get(n) != m)
+                self._stage("wait_closed_after")
+                bnet = BATTLENET_PROCESS in self.processes()
+            if st["stage"] == "wait_closed_after" and not bnet and not game:
+                write_args(st["base"], self._backups(), path=self.config, check_running=False)
+                if st["relaunch"]:
+                    self._stage("done", f"-seed taken off; Battle.net now starts D2R with: {st['base'] or '(nothing)'}")
+                    self._launch()
+                else:
+                    self._stage("cancelled", "-seed taken off again.")
+        except (LaunchError, OSError, ValueError) as e:
+            st["error"] = str(e)
+            self._save()
+        return st
+
+    def _launch(self):
+        try:
+            self.launch()
+        except (LaunchError, OSError) as e:
+            self.state["notes"].append(f"Couldn't start D2R: {e}")
+            if self.state["stage"] == "starting":  # never ran with the seed: just take it off again
+                self.state["relaunch"] = False
+                self._stage("wait_closed_after")
+            self._save()
+
+    def _backups(self):
+        if self.backup_dir is None:
+            raise LaunchError("No backup folder set.")
+        return self.backup_dir
+
+    def again(self):
+        """D2R closed but the seed didn't take (no game entered): start D2R with the seed once more."""
+        if not self.active or self.state["stage"] != "wait_closed_after" or not self.state["relaunch"]:
+            raise LaunchError("There's nothing to start again right now.")
+        self.state["launched"] = self.now()
+        self._stage("starting")
+        self._launch()
+        return self.state
+
+    def cancel(self):
+        if not self.active:
+            return self.state
+        if self.state["stage"] == "wait_closed":  # nothing was changed yet
+            self._stage("cancelled", "Nothing was changed.")
+        else:
+            self.state["relaunch"] = False
+            self._stage("wait_closed_after", "Cancelled: -seed comes off as soon as Battle.net is closed.")
+        return self.tick()
+
+    def dismiss(self):
+        if self.active:
+            raise LaunchError("The seed run hasn't finished yet.")
+        self.state = None
+        self.path.unlink(missing_ok=True)
+
+    def view(self):
+        if not self.state:
+            return None
+        return {**{k: v for k, v in self.state.items() if k != "snapshot"}, "active": self.active,
+                "title": STAGES[self.state["stage"]], "elapsed": int(self.now() - self.state["since"])}

@@ -357,7 +357,9 @@ function renderLaunchStatus() {
   $("#lnCurrent").innerHTML = s.error ? `<div class="notice bad">${esc(s.error)}</div>` :
     `<div class="lnpreview mono">${esc(s.current) || '<span class="muted">(none)</span>'}</div>` +
     (s.parsed.problems.length ? s.parsed.problems.map(p => `<div class="notice">${esc(p)}</div>`).join("") : `<div class="small" style="color:var(--ok);margin-top:6px">Looks good.</div>`);
-  $("#lnSave").disabled = s.running || !!s.error;
+  const busy = !!(s.seed_run && s.seed_run.active);
+  $("#lnSave").disabled = s.running || !!s.error || busy; $("#lnStart").disabled = busy;
+  renderSeedRun(s.seed_run);
   $("#lnBackups").innerHTML = s.backups.length ? `<tr><th>Saved before a change on</th><th></th></tr>` + s.backups.map(b => {
     const m = b.match(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
     return `<tr><td class="small">${m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : esc(b)}</td><td><button class="btn small" data-lr="${esc(b)}">Put these back</button></td></tr>`;
@@ -403,6 +405,77 @@ $("#lnStart").onclick = async () => {
   catch (e) { $("#lnMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
 };
 
+// ---------------------------------------------------------------- seed run
+let srTimer = null;
+const SR_ORDER = ["wait_closed", "starting", "playing", "wait_closed_after", "done"];
+async function startSeedRun(body) {
+  try {
+    const r = await api("/api/seedrun/start", body);
+    renderSeedRun(r.run); LN = await api("/api/launch"); renderLaunchStatus(); if (SEEDS) await loadSeeds();
+    $("#srCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) { $("#lnMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+}
+function renderSeedRun(run) {
+  const card = $("#srCard");
+  clearTimeout(srTimer);
+  if (!run) { card.style.display = "none"; card.innerHTML = ""; return; }
+  card.style.display = "";
+  const at = SR_ORDER.indexOf(run.stage), off = !run.relaunch;
+  const mins = s => s < 60 ? `${s}s` : `${Math.floor(s / 60)} min`;
+  const steps = [
+    "Close D2R and quit Battle.net",
+    `Battle.net starts D2R with <span class="mono">-seed ${run.seed}</span>`,
+    "Load the character, enter a game, then Save &amp; Exit and close D2R",
+    "Quit Battle.net again so the seed can come off",
+    "D2R starts normally, without the seed"];
+  const howQuit = `right-click the Battle.net icon next to the clock → <b>Exit</b> (closing its window only hides it)`;
+  const say = {
+    wait_closed: `Close D2R if it's open and quit Battle.net completely: ${howQuit}. The seed goes in as soon as both are closed.`,
+    starting: `Battle.net is starting D2R with seed <b>${run.seed}</b> (${mins(run.elapsed)} so far). Log in if it asks.`,
+    playing: `D2R is running with seed <b>${run.seed}</b>. Load the character that should get this map, enter a game
+      (offline), then <b>Save &amp; Exit</b> and close D2R.`,
+    wait_closed_after: (off ? "" : run.changed && run.changed.length
+        ? `<div class="notice ok">Saved during the seeded game: <b>${run.changed.map(esc).join(", ")}</b>.</div>`
+        : `<div class="notice bad">No character was saved while D2R ran with the seed. If you didn't enter a game, the map
+            didn't change: press <b>Start with the seed again</b>.</div>`) +
+      `Now quit Battle.net completely: ${howQuit}. The seed comes off as soon as it's closed` +
+      (off ? "." : ", then D2R starts normally."),
+    done: `Done. The seed is off and D2R is starting normally. Characters that entered a game with seed <b>${run.seed}</b> keep its map.`,
+    cancelled: "Seed run cancelled. Battle.net's launch arguments are back to how they were.",
+  }[run.stage];
+  card.innerHTML = `<h2>Seed run · ${run.seed}</h2>
+    ${run.stage === "cancelled" ? "" : `<ol class="srsteps">${steps.map((t, i) =>
+      `<li class="${i < at || run.stage === "done" ? "done" : i === at ? "now" : ""}">${t}</li>`).join("")}</ol>`}
+    <div>${say}</div>
+    ${run.error ? `<div class="notice bad">${esc(run.error)}</div>` : ""}
+    ${run.notes.length ? `<div class="small muted" style="margin-top:8px">${run.notes.map(esc).join("<br>")}</div>` : ""}
+    <div class="row" style="margin-top:12px">
+      ${run.stage === "wait_closed_after" && !off ? `<button class="btn" id="srAgain">Start with the seed again</button>` : ""}
+      ${run.active ? `<button class="btn" id="srCancel">Cancel</button>` : `<button class="btn" id="srDismiss">OK</button>`}
+    </div>`;
+  const act = (id, path, ask) => { const b = $(id); if (b) b.onclick = async () => {
+    if (ask && !confirm(ask)) return;
+    try { const r = await api(path, {}); renderSeedRun(r.run); LN = await api("/api/launch"); renderLaunchStatus(); }
+    catch (e) { alert(e.message); }
+  }; };
+  act("#srAgain", "/api/seedrun/again");
+  act("#srCancel", "/api/seedrun/cancel", at > 0 ? "Cancel the seed run? The seed comes off as soon as Battle.net is closed." : null);
+  act("#srDismiss", "/api/seedrun/dismiss");
+  if (run.active) srTimer = setTimeout(async () => {
+    try {
+      const r = await api("/api/seedrun");
+      if (r.run && !r.run.active) { LN = await api("/api/launch"); fillLaunchForm(); renderLaunchStatus(); if (SEEDS) await loadSeeds(); }
+      else if (r.run && r.run.stage !== run.stage) { LN = await api("/api/launch"); renderLaunchStatus(); }  // args changed
+      else renderSeedRun(r.run);
+    } catch { srTimer = setTimeout(() => renderSeedRun(run), 4000); }
+  }, 2000);
+}
+$("#lnSeedRun").onclick = () => {
+  const v = $("#lnSeed").value;
+  if (v === "") { $("#lnMsg").innerHTML = `<span style="color:var(--danger)">Type a seed (or press Random seed) first.</span>`; return; }
+  startSeedRun({ seed: v });
+};
+
 // ---------------------------------------------------------------- favourite seeds
 let SEEDS = null;
 async function loadSeeds() { SEEDS = await api("/api/seeds"); renderSeeds(); }
@@ -418,14 +491,15 @@ function renderSeeds() {
       <div><b>${esc(s.name)}</b>${s.seed === SEEDS.in_use ? ' <span class="pill ok">in use</span>' : ""}</div>
       <span class="num">${s.seed}</span>
       <span class="notes">${esc(s.notes)}${s.last_used ? `${s.notes ? " · " : ""}last used ${esc(s.last_used)}` : ""}</span>
-      <span class="acts"><button class="btn small" data-su="${s.id}">Use</button><button class="btn small" data-se="${s.id}">Edit</button><button class="btn small" data-sx="${s.id}">Delete</button></span>
+      <span class="acts"><button class="btn small primary" data-sr="${s.id}">▶ Seed run</button><button class="btn small" data-su="${s.id}">Use</button><button class="btn small" data-se="${s.id}">Edit</button><button class="btn small" data-sx="${s.id}">Delete</button></span>
     </div>`).join("")}</div>`).join("");
-  $$("[data-su]").forEach(b => b.onclick = async () => {
-    const r = await api("/api/seeds/use", { id: b.dataset.su }); SEEDS = r;
-    $("#lnSeed").value = r.seed; $("#lnSeedOn").checked = true; previewLaunch(); renderSeeds();
-    $("#lnMsg").innerHTML = `Seed <b>${r.seed}</b> selected — press <b>Save to Battle.net</b> to use it.`;
+  $$("[data-su]").forEach(b => b.onclick = () => {
+    const s = SEEDS.seeds.find(x => x.id === b.dataset.su);
+    $("#lnSeed").value = s.seed; $("#lnSeedOn").checked = true; previewLaunch();
+    $("#lnMsg").innerHTML = `Seed <b>${s.seed}</b> is in the box — <b>▶ Seed run</b> gives a character its map.`;
     $("#lnPreview").scrollIntoView({ behavior: "smooth", block: "center" });
   });
+  $$("[data-sr]").forEach(b => b.onclick = () => startSeedRun({ id: b.dataset.sr }));
   $$("[data-se]").forEach(b => b.onclick = () => seedDialog(SEEDS.seeds.find(s => s.id === b.dataset.se)));
   $$("[data-sx]").forEach(b => b.onclick = async () => {
     const s = SEEDS.seeds.find(x => x.id === b.dataset.sx);

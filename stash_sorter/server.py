@@ -91,6 +91,7 @@ def serve(session, port=0, open_browser=True):
                         "/api/tz": lambda: session.tz_state(),
                         "/api/launch": lambda: session.launch_state(),
                         "/api/seeds": lambda: session.seeds_state(),
+                        "/api/seedrun": lambda: session.seedrun_state(),
                         "/api/session/load": lambda: session.session_load(q.get("id", "")),
                         "/api/backups": lambda: session.backups(),
                     }
@@ -118,8 +119,14 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, session.seeds_save(body))
                     if path == "/api/seeds/delete":
                         return self._send(200, session.seeds_delete(body.get("id", "")))
-                    if path == "/api/seeds/use":
-                        return self._send(200, session.seeds_use(body.get("id", "")))
+                    if path == "/api/seedrun/start":
+                        return self._send(200, session.seedrun_start(body))
+                    if path == "/api/seedrun/again":
+                        return self._send(200, session.seedrun_again())
+                    if path == "/api/seedrun/cancel":
+                        return self._send(200, session.seedrun_cancel())
+                    if path == "/api/seedrun/dismiss":
+                        return self._send(200, session.seedrun_dismiss())
                     if path == "/api/launch/preview":
                         return self._send(200, session.launch_preview(body))
                     if path == "/api/launch/save":
@@ -172,12 +179,14 @@ def serve(session, port=0, open_browser=True):
                 return self._send(500, {"error": str(e)})
             return self._send(404, {"error": "not found"})
 
-    def watch():  # session tracker: look at the save folder every couple of seconds (read-only)
+    def watch():  # session tracker (read-only) and an unfinished seed run, every couple of seconds
         while True:
             time.sleep(2)
             try:
                 with lock:
                     session.tracker.poll()
+                    if session.seed_run.active:  # keeps going with the browser closed
+                        session.seed_run.tick()
             except Exception:
                 traceback.print_exc()
 

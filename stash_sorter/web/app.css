@@ -140,5 +140,12 @@ td input[type=text] { width: 100%; min-width: 120px; padding: 4px 6px; }
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; }
 .seedrow.inuse { border-color: var(--ok); } .seedrow .num { font-family: Consolas, monospace; color: var(--accent); }
 .seedrow .notes { font-size: 12px; color: var(--muted); } .seedrow .acts { display: flex; gap: 6px; white-space: nowrap; }
+.srsteps { list-style: none; padding: 0; margin: 10px 0; counter-reset: sr; }
+.srsteps li { counter-increment: sr; padding: 6px 10px 6px 38px; position: relative; color: var(--muted); border-radius: 6px; }
+.srsteps li::before { content: counter(sr); position: absolute; left: 8px; top: 5px; width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--line); text-align: center; font-size: 12px; line-height: 19px; }
+.srsteps li.done { color: var(--text); } .srsteps li.done::before { content: "✔"; border-color: var(--ok); color: var(--ok); }
+.srsteps li.now { color: var(--text); background: var(--panel-2); border: 1px solid var(--accent); }
+.srsteps li.now::before { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 760px) { .seedrow { grid-template-columns: 1fr auto; } .seedrow .notes { grid-column: 1 / -1; } }
 @media (max-width: 640px) { main { padding: 12px; } :root { --cell: 26px; } .status { margin-left: 0; } .mule-cards { grid-template-columns: 1fr; } }

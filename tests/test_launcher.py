@@ -138,5 +138,132 @@ class SeedBookTests(unittest.TestCase):
         self.assertEqual([s["seed"] for s in L.SeedBook(self.path).seeds], [7])
 
 
+class SeedRunTests(unittest.TestCase):
+    """Start with -seed, play, take -seed off, start again: driven by a fake process list and clock."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="stash-sorter-seedrun-"))
+        self.cfg = self.tmp / "Battle.net.config"
+        self.cfg.write_bytes(config_text().encode())
+        self.saves = self.tmp / "saves"
+        self.saves.mkdir()
+        (self.saves / "Sorc.d2s").write_bytes(b"old")
+        (self.saves / "Mule.d2s").write_bytes(b"old")
+        self.running, self.launches, self.clock = set(), [], [1000.0]
+
+    def run_(self, launch=None):
+        return L.SeedRun(self.tmp / "seedrun.json", saves_dir=self.saves, processes=lambda: set(self.running),
+                         config=self.cfg, launch=launch or (lambda: self.launches.append(L.read_args(self.cfg))),
+                         backup_dir=self.tmp / "backups", now=lambda: self.clock[0])
+
+    def args(self):
+        return L.read_args(self.cfg)
+
+    def test_strip_seed(self):
+        self.assertEqual(L.strip_seed("-direct -seed 123 -txt"), "-direct -txt")
+        self.assertEqual(L.strip_seed("-enablerespec -direct txt -seed (number goes here no bracket)"),
+                         "-enablerespec -direct txt")
+        self.assertEqual(L.strip_seed('-mod "My Mod" -SEED 5'), '-mod "My Mod"')
+        self.assertEqual(L.strip_seed("-seed"), "")
+        self.assertEqual(L.strip_seed(""), "")
+
+    def test_full_run(self):
+        self.running = {L.BATTLENET_PROCESS}
+        run = self.run_()
+        self.assertEqual(run.start(4242)["stage"], "wait_closed")
+        self.assertIn("(number goes here", self.args())  # nothing touched while Battle.net is open
+        self.running = set()
+        self.assertEqual(run.tick()["stage"], "starting")
+        self.assertEqual(self.launches, ["-enablerespec -direct txt -seed 4242"])  # Battle.net started with the seed
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        self.assertEqual(run.tick()["stage"], "playing")
+        (self.saves / "Sorc.d2s").write_bytes(b"new map")
+        self.running = {L.BATTLENET_PROCESS}
+        st = run.tick()
+        self.assertEqual((st["stage"], st["changed"]), ("wait_closed_after", ["Sorc"]))
+        self.assertEqual(self.args(), "-enablerespec -direct txt -seed 4242")  # Battle.net would write it back
+        self.running = set()
+        self.assertEqual(run.tick()["stage"], "done")
+        self.assertEqual(self.args(), "-enablerespec -direct txt")
+        self.assertEqual(self.launches[1], "-enablerespec -direct txt")  # started again, without the seed
+        self.assertEqual(json.loads(self.cfg.read_bytes())["Games"]["wow"]["AdditionalLaunchArguments"], "-console")
+        self.assertFalse(run.active)
+        run.dismiss()
+        self.assertFalse((self.tmp / "seedrun.json").exists())
+
+    def test_carries_on_after_a_restart(self):
+        self.run_().start(7)
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        self.run_().tick()
+        self.running = set()  # app was closed while D2R and Battle.net were closed too
+        again = self.run_()
+        self.assertTrue(again.active)
+        self.assertEqual(again.tick()["stage"], "done")
+        self.assertNotIn("-seed", self.args())
+        self.assertEqual(len(self.launches), 2)
+
+    def test_cancel(self):
+        self.running = {L.BATTLENET_PROCESS}
+        run = self.run_()
+        run.start(1)
+        self.assertEqual(run.cancel()["stage"], "cancelled")
+        self.assertIn("(number goes here", self.args())  # untouched
+        self.running = set()
+        run = self.run_()
+        run.dismiss()
+        run.start(2)
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        run.tick()
+        self.assertEqual(run.cancel()["stage"], "wait_closed_after")  # can't change anything while it's open
+        self.running = set()
+        self.assertEqual(run.tick()["stage"], "cancelled")
+        self.assertEqual(self.args(), "-enablerespec -direct txt")
+        self.assertEqual(len(self.launches), 1)  # not started again
+
+    def test_start_again_when_no_game_was_entered(self):
+        run = self.run_()
+        run.start(3)
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        run.tick()
+        self.running = {L.BATTLENET_PROCESS}
+        self.assertEqual(run.tick()["changed"], [])
+        self.assertEqual(run.again()["stage"], "starting")
+        self.assertEqual(self.launches[-1], "-enablerespec -direct txt -seed 3")
+        with self.assertRaises(L.LaunchError):
+            run.again()
+
+    def test_battlenet_closed_before_d2r_started(self):
+        run = self.run_()
+        run.start(9)
+        self.clock[0] += L.GIVE_UP_STARTING + 1
+        st = run.tick()
+        self.assertEqual(st["stage"], "cancelled")
+        self.assertNotIn("-seed", self.args())
+
+    def test_launch_failure_takes_the_seed_off(self):
+        def fail():
+            raise L.LaunchError("Battle.net isn't installed in the usual place.")
+        run = self.run_(launch=fail)
+        st = run.start(5)
+        self.assertEqual(st["stage"], "cancelled")
+        self.assertNotIn("-seed", self.args())
+        self.assertTrue(any("isn't installed" in n for n in st["notes"]))
+
+    def test_refusals(self):
+        run = self.run_()
+        for seed in ("abc", -1, L.MAX_SEED + 1):
+            with self.assertRaises(L.LaunchError):
+                run.start(seed)
+        L.write_args("-resetofflinemaps", self.tmp / "backups", path=self.cfg, check_running=False)
+        with self.assertRaises(L.LaunchError):
+            run.start(1)
+        self.assertFalse(run.active)
+        L.write_args("-direct -txt", self.tmp / "backups", path=self.cfg, check_running=False)
+        self.running = {L.BATTLENET_PROCESS}
+        run.start(1)
+        with self.assertRaises(L.LaunchError):
+            run.start(2)
+
+
 if __name__ == "__main__":
     unittest.main()

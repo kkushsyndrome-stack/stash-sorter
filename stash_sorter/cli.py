@@ -263,6 +263,65 @@ def cmd_launch(args):
     print("Starting Diablo II: Resurrected through Battle.net...")
 
 
+SEED_RUN_SAY = {
+    "wait_closed": "Close D2R and quit Battle.net completely (right-click its icon next to the clock, then Exit).",
+    "starting": "Battle.net is starting D2R with the seed (log in if it asks)...",
+    "playing": "D2R is running with the seed: load the character, enter a game, then Save & Exit and close D2R.",
+    "wait_closed_after": "Now quit Battle.net completely again so the seed can come off.",
+}
+
+
+def cmd_seed_run(args):
+    """Start D2R once with -seed, then take it off and start D2R normally (follows along until it's done)."""
+    import time
+    from pathlib import Path
+    from . import launcher as L
+    from .paths import app_dir, backups_dir
+    from .world import find_save_dir
+    try:
+        saves = find_save_dir(args.saves)
+    except FileNotFoundError:
+        saves = None
+    run = L.SeedRun(app_dir() / "seedrun.json", saves_dir=saves,
+                    backup_dir=Path(args.backups) if args.backups else backups_dir())
+    try:
+        if args.cancel:
+            run.cancel()
+        elif args.seed is not None:
+            run.start(args.seed)
+        elif not run.active:
+            print("No seed run is going. Start one with: seed-run SEED")
+            return
+    except L.LaunchError as e:
+        print(e)
+        sys.exit(1)
+    shown, notes = None, 0
+    try:
+        while True:
+            st = run.tick()
+            for n in st["notes"][notes:]:
+                print(f"  {n}")
+            notes = len(st["notes"])
+            if st["stage"] != shown:
+                shown = st["stage"]
+                if shown == "wait_closed_after" and st["relaunch"] and st["changed"] is not None:
+                    print("  Saved during the seeded game: " + (", ".join(st["changed"]) or
+                          "nobody. If you didn't enter a game the map didn't change: press Play in Battle.net "
+                          "(it still has the seed), play a game, close D2R, then quit Battle.net."))
+                if shown in SEED_RUN_SAY:
+                    print(SEED_RUN_SAY[shown])
+            if st.get("error"):
+                print(f"  ! {st['error']}")
+            if not run.active:
+                print("Done: the seed is off" + (" and D2R is starting normally." if shown == "done" else "."))
+                run.dismiss()
+                return
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print("\nStopped watching. The seed run carries on next time (seed-run, or the Launch tab) and "
+              "seed-run --cancel takes the seed off.")
+
+
 def cmd_set_clock(args):
     """Elevated helper started by the Terror Zones tab (Windows asks for permission first)."""
     from .clock import helper_main
@@ -387,6 +446,10 @@ def main(argv=None):
     p.add_argument("--set", help='new arguments, e.g. "-direct -txt -seed 12345" (Battle.net must be closed)')
     p.set_defaults(func=cmd_launch_args)
     sub.add_parser("launch", help="start D2R through Battle.net").set_defaults(func=cmd_launch)
+    p = sub.add_parser("seed-run", help="give a character a map seed: start D2R once with -seed, then without it")
+    p.add_argument("seed", nargs="?", type=int, help="map seed (leave out to carry on with an unfinished run)")
+    p.add_argument("--cancel", action="store_true", help="take the seed back off (once Battle.net is closed)")
+    p.set_defaults(func=cmd_seed_run)
     p = sub.add_parser("set-clock", help="(used by the Terror Zones tab; needs administrator rights)")
     p.add_argument("when", help="local time YYYY-MM-DDTHH:MM:SS, or 'real'")
     p.add_argument("real_epoch", nargs="?")

@@ -43,6 +43,15 @@ else. Typos like a missing dash or a non-number seed are pointed out. Saving nee
 overwrites the file when it exits); only D2R's arguments change, and the previous settings are kept so you can
 put them back. *Launch D2R* starts the game through Battle.net.
 
+**Seed runs and favourite seeds:** give a character a particular offline map. A seed run starts D2R once with
+`-seed`, you load the character and play one game, and once you've closed D2R and quit Battle.net the seed is taken
+off again and D2R starts normally. The character keeps the map. Taking `-seed` off matters: leaving it in makes the
+game's random numbers predictable. The tab walks you through each step, notices on its own when D2R and Battle.net
+open and close, and shows which characters were saved during the seeded game. If Stash Sorter is closed partway
+through, it finishes the run (and takes the seed off) the next time it starts. Keep the seeds you like as
+favourites, each with a name, what it's for (Cows, Pit / Tombs, Chaos, ...) and notes, and start a seed run from
+any of them with one click.
+
 **Look around:**
 - The game's own **item artwork** and **tooltips** ("+20% Faster Cast Rate", "Level 10 Life Tap (12/15 Charges)").
 - **Find**: search every character and stash by name, stat or location ("shako", "faster cast", "CharmMule").
@@ -106,7 +115,7 @@ download this folder, and double-click **`Stash Sorter.bat`** — or run `python
    New to it? Set *Test run* to "Just 1 item" first.
 4. **Session** — start a session before you play; every Save & Exit shows up as a run.
    **Terror Zones** — pick a zone, set the clock, revert when you're done.
-   **Launch** — D2R's Battle.net launch arguments (-direct -txt, -seed, -mod …) and a Launch button.
+   **Launch** — D2R's Battle.net launch arguments (-direct -txt, -mod …), favourite seeds and seed runs.
 5. **Find**, **Collection**, **Item Levels** — browse and search.
 6. **Clean Up** — delete duplicate uniques/sets you don't need, and empty mules.
 7. **Sorting Rules** — change how items are categorised and what mules are called.
@@ -125,6 +134,7 @@ python -m stash_sorter track                                 # session tracker i
 python -m stash_sorter tz                                    # current and upcoming terror zones
 python -m stash_sorter launch-args [--set "-direct -txt"]    # show / change D2R's launch arguments
 python -m stash_sorter launch                                # start D2R through Battle.net
+python -m stash_sorter seed-run 1234567                      # play once with -seed, then start D2R without it
 python -m stash_sorter dupes                                 # duplicate uniques/sets (with item keys)
 python -m stash_sorter delete-items KEY [KEY ...]            # delete chosen copies (asks first)
 python -m stash_sorter empty-mules                           # which mules are empty

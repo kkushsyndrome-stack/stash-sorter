@@ -110,6 +110,7 @@
   </section>
 
   <section id="launch">
+    <div class="card" id="srCard" style="display:none"></div>
     <div class="card">
       <h2>Launch options</h2>
       <p class="muted small">The extra command line arguments Battle.net passes to Diablo II: Resurrected — the same box as Battle.net → <b>Game Settings</b> → Diablo II: Resurrected → <b>Additional command line arguments</b>.</p>
@@ -125,7 +126,11 @@
         <input type="number" id="lnSeed" min="0" max="4294967295" placeholder="e.g. 1234567" style="width:170px">
         <button class="btn small" id="lnRandom">Random seed</button>
         <button class="btn small" id="lnFavSave">★ Save this seed</button>
-        <span class="small muted">-seed: the same offline maps every game</span>
+        <button class="btn small primary" id="lnSeedRun">▶ Seed run</button>
+      </div>
+      <div class="small muted" style="margin-top:6px"><b>Seed run</b> gives a character this map: D2R starts once with
+        <span class="mono">-seed</span>, you play one game, then the seed comes off again and D2R starts normally.
+        The map stays with the character, and the game's random numbers stay unpredictable.
       </div>
       <div class="row" style="margin-top:12px">
         <div class="field"><label>Mod (-mod)</label><select id="lnMod"></select></div>
@@ -143,7 +148,8 @@
     </div>
     <div class="card">
       <h2>Favourite seeds</h2>
-      <p class="small muted">Keep the map seeds you like, grouped by what you use them for. <b>Use</b> puts a seed into the launch arguments above; then press <b>Save to Battle.net</b>.</p>
+      <p class="small muted">Keep the map seeds you like, grouped by what you use them for. <b>▶ Seed run</b> gives a character that map;
+        <b>Use</b> only puts the seed into the box above.</p>
       <div class="row"><div class="field grow"><label>Search</label><input type="text" id="seedQ" placeholder="name, purpose, notes or number"></div></div>
       <div id="seedList" style="margin-top:10px"></div>
     </div>

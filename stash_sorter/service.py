@@ -35,6 +35,8 @@ class Session:
         self.crafter_level = self.max_char_level()
         self.clock = TerrorClock()
         self.seed_book = launcher.SeedBook(paths.app_dir() / "seeds.json")
+        self.seed_run = launcher.SeedRun(paths.app_dir() / "seedrun.json", saves_dir=self.save_dir,
+                                         backup_dir=self.backup_dir)
         self.clock_checked = False
         self.tracker = Tracker(self.save_dir, self.gd, self.world.names,
                                Path(sessions) if sessions else paths.app_dir() / "sessions", self._describe_found,
@@ -422,7 +424,7 @@ class Session:
         st = {"config": str(L.config_path()), "found": L.config_path().is_file(), "running": L.battlenet_running(),
               "battlenet": str(L.battlenet_exe() or ""), "mods": L.list_mods(self._install_dir()),
               "install": str(self._install_dir() or ""), "flags": L.FLAGS, "value_flags": L.VALUE_FLAGS,
-              "current": None, "parsed": None, "error": None, "backups": []}
+              "current": None, "parsed": None, "error": None, "backups": [], "seed_run": self.seed_run.view()}
         try:
             st["current"] = L.read_args()
             st["parsed"] = L.parse_args(st["current"])
@@ -436,7 +438,12 @@ class Session:
         args = launcher.build_args(body.get("flags") or [], body.get("seed"), body.get("mod"), body.get("other") or "")
         return {"args": args, "problems": launcher.parse_args(args)["problems"]}
 
+    def _no_seed_run(self):
+        if self.seed_run.active:
+            raise launcher.LaunchError("A seed run is going: let it finish (or cancel it) first.")
+
     def launch_save(self, body):
+        self._no_seed_run()
         args = body.get("args")
         if args is None:
             args = self.launch_preview(body)["args"]
@@ -444,6 +451,7 @@ class Session:
         return {"saved": args, "backup": str(backup), **self.launch_state()}
 
     def launch_restore(self, name):
+        self._no_seed_run()
         p = (self.backup_dir / name).resolve()
         if p.parent != self.backup_dir.resolve() or not p.name.startswith("Battle.net.config-") or not p.is_file():
             raise launcher.LaunchError("Unknown backup")
@@ -467,13 +475,39 @@ class Session:
         self.seed_book.delete(seed_id)
         return self.seeds_state()
 
-    def seeds_use(self, seed_id):
-        entry = self.seed_book.mark_used(seed_id)
-        return {"seed": entry["seed"], **self.seeds_state()}
-
     def launch_game(self):
+        self._no_seed_run()
         launcher.launch_d2r()
         return {"launched": True}
+
+    # ---------- seed run: start D2R once with -seed, then take it off and start again
+    def seedrun_state(self):
+        self.seed_run.tick()
+        return {"run": self.seed_run.view()}
+
+    def seedrun_start(self, body):
+        seed_id = body.get("id") or None
+        if seed_id:
+            entry = self.seed_book.get(seed_id)
+            seed = entry["seed"]
+        else:
+            seed = body.get("seed")
+        self.seed_run.start(seed, seed_id)
+        if seed_id:
+            self.seed_book.mark_used(seed_id)
+        return self.seedrun_state()
+
+    def seedrun_again(self):
+        self.seed_run.again()
+        return self.seedrun_state()
+
+    def seedrun_cancel(self):
+        self.seed_run.cancel()
+        return self.seedrun_state()
+
+    def seedrun_dismiss(self):
+        self.seed_run.dismiss()
+        return self.seedrun_state()
 
     # ---------- session tracker
     def _describe_found(self, it):
