@@ -16,6 +16,7 @@
     <button data-s="find">Find</button>
     <button data-s="grail">Collection</button>
     <button data-s="assess">Item Levels</button>
+    <button data-s="cleanup">Clean Up</button>
     <button data-s="rules">Sorting Rules</button>
     <button data-s="backups">Backups</button>
   </nav>
@@ -57,7 +58,7 @@
       <h2>Sort &amp; distribute</h2>
       <div class="modes" id="modes">
         <label class="mode"><input type="radio" name="mode" value="stash" checked><b>Empty the shared stash</b><span>Move stash items onto mules that already hold that kind of loot.</span></label>
-        <label class="mode"><input type="radio" name="mode" value="tidy"><b>Tidy up</b><span>Empty the stash <i>and</i> move items sitting on the wrong mule. Items already in the right place don't move.</span></label>
+        <label class="mode"><input type="radio" name="mode" value="tidy"><b>Tidy up</b><span>Empty the stash, move items sitting on the wrong mule, and pack each kind of loot onto as few mules as possible (freeing whole mules).</span></label>
         <label class="mode"><input type="radio" name="mode" value="reorganize"><b>Full re-sort</b><span>Lay out the stash and every mule again, category by category. Changes many files.</span></label>
         <label class="mode"><input type="radio" name="mode" value="migrate"><b>Bring the old stash forward</b><span>Move your Resurrected-era shared stash into the RotW one (as a character transfer would). Gold stays put.</span></label>
       </div>
@@ -125,6 +126,26 @@
       </div>
     </div>
     <div class="card"><div id="assessSummary" class="row" style="margin-bottom:10px"></div><div class="table-wrap"><table id="assessTable"></table></div></div>
+  </section>
+
+  <section id="cleanup">
+    <div class="card">
+      <h2>Duplicates</h2>
+      <p class="muted small">Unique and set items you have more than once, with every copy's stats so you can keep the best roll. Tick the copies you want to <b>delete</b>. Equipped items can't be deleted here (take them off in game first). Deleting is backed up and can be undone from Backups.</p>
+      <div class="row">
+        <div class="field"><label>Show</label><select id="dKind"><option value="">Uniques &amp; sets</option><option value="unique">Uniques</option><option value="set">Set items</option></select></div>
+        <div class="field grow"><label>Search</label><input type="text" id="dq" placeholder="item name"></div>
+        <div id="dupSummary" class="small muted"></div>
+      </div>
+      <div id="dupOut" style="margin-top:12px"></div>
+      <div class="actionbar"><span id="dupSel" class="small"></span><button class="btn" id="dupClear">Clear selection</button><button class="btn danger" id="dupDelete" disabled>Delete selected…</button></div>
+    </div>
+    <div class="card">
+      <h2>Empty mules</h2>
+      <p class="muted small">Mules with nothing worth keeping: nothing in their stash, inventory or cube, no gold, no mercenary, only their starting gear. Run <b>Sort &amp; Distribute → Tidy up</b> first to pack your loot onto as few mules as possible. Deleting removes the character's save files (backed up, and undoable from Backups).</p>
+      <div class="table-wrap"><table id="emptyTable"></table></div>
+      <div class="actionbar"><span id="emptySel" class="small"></span><button class="btn danger" id="emptyDelete" disabled>Delete selected mules…</button></div>
+    </div>
   </section>
 
   <section id="rules">

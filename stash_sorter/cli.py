@@ -24,7 +24,7 @@ def _plan_opts(args):
         "stash_file": args.stash, "source_stash": args.source_stash, "mule_max_level": args.mule_level,
         "mule_name_hint": not args.no_name_hint, "mules": _split(args.mules) or None,
         "exclude": _split(args.exclude), "keep_in_stash": _split(args.keep), "limit": args.limit,
-        "create_mules": args.create_mules, "crafter_level": args.crafter_level,
+        "create_mules": args.create_mules, "crafter_level": args.crafter_level, "compact": not args.no_compact,
     }
 
 
@@ -77,6 +77,12 @@ def _print_plan(p):
             print(f"       {u['name']:42s} {u['from']}")
     if p["left_in_place"]:
         print(f"\n  {p['left_in_place']} misplaced item(s) stay put (no room on a better mule).")
+    if p["emptied"]:
+        print(f"\n  These mules will be empty afterwards: {', '.join(p['emptied'])}")
+    for d in p["deletions"]:
+        print(f"  DELETE item {d['name']:36s} {d['where']}")
+    for d in p["delete_chars"]:
+        print(f"  DELETE mule {d['name']} ({d['file']} and its side files)")
 
 
 def cmd_plan(args):
@@ -88,10 +94,14 @@ def cmd_apply(args):
     s = _session(args)
     p = s.make_plan(_plan_opts(args))
     _print_plan(p)
-    if not (p["moves"] or p["merges"] or p["renames"] or p["new_mules"]):
+    _confirm_and_apply(s, p, args.yes)
+
+
+def _confirm_and_apply(s, p, yes):
+    if not (p["moves"] or p["merges"] or p["renames"] or p["new_mules"] or p["deletions"] or p["delete_chars"]):
         print("\nNothing to do.")
         return
-    if not args.yes:
+    if not yes:
         ans = input("\nClose Diablo II: Resurrected completely, then type 'apply' to continue: ")
         if ans.strip().lower() != "apply":
             print("Cancelled; nothing was changed.")
@@ -129,6 +139,47 @@ def cmd_find(args):
         text = " ".join([it["name"], it["base"], it["where"]] + it["stats"]).lower()
         if all(w in text for w in words):
             print(f"{it['name'][:40]:40s} {it['where'][:34]:34s} ilvl {it['ilvl']:2d}  {'; '.join(it['stats'][:3])}")
+
+
+def cmd_dupes(args):
+    s = _session(args)
+    groups = s.duplicates()
+    print(f"{len(groups)} unique/set items you have more than once "
+          f"({sum(len(g['copies']) - 1 for g in groups)} extra copies). Delete with: delete-items KEY [KEY ...]\n")
+    for g in groups:
+        print(f"{g['name']} ({g['kind']}, {len(g['copies'])} copies)")
+        for c in g["copies"]:
+            flag = "" if c["deletable"] else "  [equipped: can't delete]"
+            print(f"    {c['key']:44s} ilvl {c['ilvl']:2d}  {c['where'][:30]:30s} {'; '.join(c['stats'][:3])}{flag}")
+
+
+def cmd_delete_items(args):
+    s = _session(args)
+    try:
+        p = s.plan_delete_items(args.keys)
+    except (ValueError, KeyError) as e:
+        print(f"Nothing was changed: {e}")
+        sys.exit(2)
+    _print_plan(p)
+    _confirm_and_apply(s, p, args.yes)
+
+
+def cmd_empty_mules(args):
+    s = _session(args)
+    for m in s.empty_mules():
+        state = "EMPTY" if m["empty"] else m["reason"]
+        print(f"{m['name']:16s} {m['class']:12s} lvl {m['level']:2d}  {state}")
+
+
+def cmd_delete_mules(args):
+    s = _session(args)
+    try:
+        p = s.plan_delete_mules(args.names)
+    except ValueError as e:
+        print(f"Nothing was changed: {e}")
+        sys.exit(2)
+    _print_plan(p)
+    _confirm_and_apply(s, p, args.yes)
 
 
 def cmd_backups(args):
@@ -216,6 +267,7 @@ def main(argv=None):
         p.add_argument("--limit", type=int, default=0, help="test run: only move this many items")
         p.add_argument("--create-mules", type=int, default=0, help="(experimental) create up to N new mules if needed")
         p.add_argument("--crafter-level", type=int, help="crafting character level for the craft-bait rules")
+        p.add_argument("--no-compact", action="store_true", help="tidy: don't pack categories onto fewer mules")
 
     p = sub.add_parser("gui", help="open the browser GUI (default)")
     p.add_argument("--port", type=int, default=0)
@@ -237,6 +289,16 @@ def main(argv=None):
     p = sub.add_parser("find", help="search every item by name, stats or location")
     p.add_argument("query", nargs="+")
     p.set_defaults(func=cmd_find)
+    sub.add_parser("dupes", help="list unique and set items you have more than once").set_defaults(func=cmd_dupes)
+    p = sub.add_parser("delete-items", help="delete items by key (see `dupes`); backed up and undoable")
+    p.add_argument("keys", nargs="+")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_delete_items)
+    sub.add_parser("empty-mules", help="list mules and whether they are empty").set_defaults(func=cmd_empty_mules)
+    p = sub.add_parser("delete-mules", help="delete empty mules (save + side files); backed up and undoable")
+    p.add_argument("names", nargs="+")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_delete_mules)
     sub.add_parser("backups", help="list backups (and which changes can be undone)").set_defaults(func=cmd_backups)
     p = sub.add_parser("undo", help="undo one apply, given its -log.json file name")
     p.add_argument("log")

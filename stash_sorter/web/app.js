@@ -165,7 +165,7 @@ function planOptions() {
   return {
     mode: $("input[name=mode]:checked").value, rename: $("#rename").value, use_stackables: $("#stackables").checked,
     stash_file: $("#stashSel").value, mules: selectedMules(), mule_max_level: +$("#muleLevel").value || 1,
-    mule_name_hint: $("#muleHint").checked, limit: +$("#limit").value, create_mules: +$("#createMules").value,
+    mule_name_hint: $("#muleHint").checked, limit: +$("#limit").value, create_mules: +$("#createMules").value, compact: true,
     keep_in_stash: $$("#keepCats input:checked").map(o => o.value), keep_items: [...kept], crafter_level: +$("#crafter").value || undefined,
   };
 }
@@ -190,6 +190,7 @@ function renderPlan() {
       <div class="stat"><div class="l">Files changed</div><div class="v">${p.files_touched}</div></div>
     </div>
     ${p.left_in_place ? `<div class="notice">${p.left_in_place} item(s) are on a mule of a different kind but there's no room elsewhere, so they stay put.</div>` : ""}
+    ${p.emptied.length ? `<div class="notice ok"><b>${p.emptied.length} mule(s) will be empty afterwards:</b> ${p.emptied.map(esc).join(", ")}. After applying, you can delete them under <b>Clean Up</b> or keep them for later.</div>` : ""}
     ${p.unplaced.length ? `<div class="notice">Not enough room for ${p.unplaced.length} item(s): ${p.unplaced.slice(0, 12).map(u => esc(u.name)).join(", ")}${p.unplaced.length > 12 ? "…" : ""}. Make a few new level-1 characters (or let Stash Sorter create some) and preview again.</div>` : ""}
     <div class="row" style="margin-top:14px">
       <button class="btn danger" id="applyBtn" ${actions ? "" : "disabled"}>Apply this plan…</button>
@@ -328,6 +329,90 @@ function renderAssess() {
   }));
 }
 
+// ---------------------------------------------------------------- clean up: duplicates & empty mules
+let dupGroups = null, dupPicked = new Set(), emptyList = [], emptyPicked = new Set();
+async function loadCleanup() {
+  [dupGroups, emptyList] = await Promise.all([api("/api/duplicates"), api("/api/empty_mules")]);
+  dupPicked = new Set([...dupPicked].filter(k => dupGroups.some(g => g.copies.some(c => c.key === k))));
+  emptyPicked = new Set([...emptyPicked].filter(n => emptyList.some(m => m.name === n && m.empty)));
+  renderDupes(); renderEmpty();
+}
+function renderDupes() {
+  const kind = $("#dKind").value, q = $("#dq").value.toLowerCase();
+  const groups = dupGroups.filter(g => (!kind || g.kind === kind) && (!q || g.name.toLowerCase().includes(q)));
+  $("#dupSummary").textContent = `${dupGroups.length} items you have more than once · ${dupGroups.reduce((a, g) => a + g.copies.length - 1, 0)} extra copies`;
+  const out = $("#dupOut"); out.innerHTML = "";
+  for (const g of groups) {
+    const box = document.createElement("div"); box.className = "dup";
+    box.innerHTML = `<div class="head">${g.art && S.art ? `<img src="${artUrl(g.art)}" alt="">` : ""}<div><b class="q-${esc(g.quality)}">${esc(g.name)}</b>
+      <div class="small muted">${esc(g.base)} · ${g.kind} · ${g.copies.length} copies</div></div></div>`;
+    const grid = document.createElement("div"); grid.className = "copies";
+    for (const c of g.copies) {
+      const d = document.createElement("div");
+      d.className = "copy" + (dupPicked.has(c.key) ? " sel" : "") + (c.deletable ? "" : " locked");
+      d.innerHTML = `<label class="check"><input type="checkbox" ${dupPicked.has(c.key) ? "checked" : ""} ${c.deletable ? "" : "disabled"}>
+        <b>${c.deletable ? "Delete this copy" : "Equipped — can't delete"}</b></label>
+        <div class="where">${esc(c.where)} · ilvl ${c.ilvl}${c.ethereal ? " · ethereal" : ""}</div>
+        <div class="stats">${(c.stats || []).map(esc).join("<br>")}</div>`;
+      if (c.deletable) d.addEventListener("click", e => {
+        if (e.target.tagName !== "INPUT") d.querySelector("input").checked = !d.querySelector("input").checked;
+        d.querySelector("input").checked ? dupPicked.add(c.key) : dupPicked.delete(c.key);
+        d.classList.toggle("sel", dupPicked.has(c.key)); updateDupBar(g);
+      });
+      grid.appendChild(d);
+    }
+    box.appendChild(grid); out.appendChild(box);
+  }
+  updateDupBar();
+}
+function updateDupBar(group) {
+  if (group && group.copies.every(c => dupPicked.has(c.key)))
+    $("#dupSel").innerHTML = `<span style="color:var(--warn)">You've ticked every copy of ${esc(group.name)} — that deletes all of them.</span> `;
+  else $("#dupSel").textContent = dupPicked.size ? `${dupPicked.size} item(s) selected` : "";
+  $("#dupDelete").disabled = !dupPicked.size;
+}
+function renderEmpty() {
+  $("#emptyTable").innerHTML = `<tr><th></th><th>Mule</th><th>Class</th><th>Level</th><th>Status</th></tr>` + emptyList.map(m =>
+    `<tr><td><input type="checkbox" data-em="${esc(m.name)}" ${m.empty ? "" : "disabled"} ${emptyPicked.has(m.name) ? "checked" : ""}></td>
+     <td>${esc(m.name)}</td><td>${esc(m.class)}</td><td>${m.level}</td>
+     <td class="small">${m.empty ? '<span class="pill ok">empty</span>' : `<span class="muted">${esc(m.reason)}</span>`}</td></tr>`).join("");
+  $$("[data-em]").forEach(cb => cb.onchange = () => { cb.checked ? emptyPicked.add(cb.dataset.em) : emptyPicked.delete(cb.dataset.em); updateEmptyBar(); });
+  updateEmptyBar();
+}
+function updateEmptyBar() {
+  const n = emptyList.filter(m => m.empty).length;
+  $("#emptySel").textContent = `${n} empty mule(s)` + (emptyPicked.size ? ` · ${emptyPicked.size} selected` : "");
+  $("#emptyDelete").disabled = !emptyPicked.size;
+}
+async function confirmDelete(planPath, body, what) {
+  let p;
+  try { p = await api(planPath, body); } catch (e) { modal(`<h2>Can't do that</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`); $("#mOk").onclick = closeModal; return; }
+  const list = p.deletions.map(d => `<li>${esc(d.name)} <span class="muted">— ${esc(d.where)}</span></li>`).concat(
+    p.delete_chars.map(d => `<li><b>${esc(d.name)}</b> <span class="muted">(level ${d.level}, ${esc(d.file)} and its side files)</span></li>`)).join("");
+  modal(`<h2>Delete ${what}?</h2><ul class="small" style="max-height:300px;overflow:auto">${list}</ul>
+    <div class="notice">Close Diablo II: Resurrected completely first. Your whole save folder is backed up before anything is deleted, and <b>Backups → Undo</b> brings it all back.</div>
+    <label class="check"><input type="checkbox" id="mSure"> I understand these will be deleted from my saves</label>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo" disabled>Delete</button></div>`);
+  $("#mSure").onchange = () => { $("#mGo").disabled = !$("#mSure").checked; };
+  $("#mCancel").onclick = closeModal;
+  $("#mGo").onclick = async () => {
+    $("#mGo").disabled = true; $("#mGo").textContent = "Deleting…";
+    try {
+      const r = await api("/api/apply", { plan_id: p.id });
+      modal(`<h2>Done ✔</h2><p>${esc(r.log_lines.at(-1) || "")}</p><p class="small">Backup: <span class="mono">${esc(r.backup)}</span></p><div class="row" style="justify-content:flex-end"><button class="btn primary" id="mOk">OK</button></div>`);
+      dupPicked.clear(); emptyPicked.clear(); allItems = null; grail = null;
+      await refresh();
+    } catch (e) {
+      modal(`<h2>Nothing was changed</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`);
+    }
+    $("#mOk").onclick = closeModal;
+  };
+}
+$("#dKind").onchange = renderDupes; $("#dq").oninput = renderDupes;
+$("#dupClear").onclick = () => { dupPicked.clear(); renderDupes(); };
+$("#dupDelete").onclick = () => confirmDelete("/api/plan_delete_items", { keys: [...dupPicked] }, `${dupPicked.size} item(s)`);
+$("#emptyDelete").onclick = () => confirmDelete("/api/plan_delete_mules", { names: [...emptyPicked] }, `${emptyPicked.size} mule(s)`);
+
 // ---------------------------------------------------------------- sorting rules
 async function loadRules() { rulesState = await api("/api/rules"); renderRules(); }
 function renderRules(msg) {
@@ -410,7 +495,7 @@ async function show(name) {
   $$("main section").forEach(s => s.classList.toggle("active", s.id === b.dataset.s));
   if (location.hash.slice(1).split("-")[0] !== b.dataset.s) history.replaceState(null, "", "#" + b.dataset.s);
   hideTip();
-  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules };
+  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup };
   if (loaders[b.dataset.s]) await loaders[b.dataset.s]();
 }
 $$("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.s)));

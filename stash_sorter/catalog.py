@@ -41,10 +41,11 @@ def display_name(it, gd, names):
     base = gd.items[it.code]
     if it.runeword:
         return f"{runeword_name(it, names)} ({base.name})"
-    if it.unique_id is not None:
-        return gd.uniques.get(it.unique_id, (f"Unique #{it.unique_id}",))[0]
-    if it.set_id is not None:
-        return gd.set_items.get(it.set_id, (f"Set item #{it.set_id}",))[0]
+    # quest items use unique quality with a "no particular unique" id: show their base name
+    if it.unique_id is not None and it.unique_id in gd.uniques:
+        return gd.uniques[it.unique_id][0]
+    if it.set_id is not None and it.set_id in gd.set_items:
+        return gd.set_items[it.set_id][0]
     if it.quality == 4:
         pre = names.prefixes[it.prefixes[0]] if it.prefixes and 0 < it.prefixes[0] < len(names.prefixes) else ""
         suf = names.suffixes[it.suffixes[0]] if it.suffixes and 0 < it.suffixes[0] < len(names.suffixes) else ""

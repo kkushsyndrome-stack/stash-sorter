@@ -82,6 +82,8 @@ def serve(session, port=0, open_browser=True):
                         "/api/items": lambda: session.all_items(),
                         "/api/collection": lambda: session.collection(),
                         "/api/rules": lambda: session.rules_json(),
+                        "/api/duplicates": lambda: session.duplicates(),
+                        "/api/empty_mules": lambda: session.empty_mules(),
                         "/api/backups": lambda: session.backups(),
                     }
                     if path in routes:
@@ -104,6 +106,10 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, {"ok": True})
                     if path == "/api/plan":
                         return self._send(200, session.make_plan(body))
+                    if path == "/api/plan_delete_items":
+                        return self._send(200, session.plan_delete_items(body.get("keys") or []))
+                    if path == "/api/plan_delete_mules":
+                        return self._send(200, session.plan_delete_mules(body.get("names") or []))
                     if path == "/api/apply":
                         logs = []
                         res = session.apply(int(body.get("plan_id", -1)), log=logs.append)

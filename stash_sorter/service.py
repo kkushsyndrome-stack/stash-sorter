@@ -10,7 +10,7 @@ from .art import ArtIndex
 from .describe import Describer
 from .items import MODE_STORED, MODE_EQUIPPED, MODE_BELT, PAGE_INVENTORY, PAGE_STASH, PAGE_CUBE
 from .rules import Ruleset, load_default_rules, validate, RulesError
-from .savefiles import TAB_NORMAL, TAB_STACKABLES
+from .savefiles import TAB_NORMAL, TAB_STACKABLES, empty_status
 from .world import find_save_dir, load_world, mule_status
 
 GRID_PAGES = (PAGE_INVENTORY, PAGE_STASH, PAGE_CUBE)
@@ -258,6 +258,7 @@ class Session:
             source_stash=o.get("source_stash") or None,
             mule_max_level=int(o.get("mule_max_level", 1)),
             mule_name_hint=bool(o.get("mule_name_hint", True)),
+            compact=bool(o.get("compact", True)),
             mules=o.get("mules") or None,
             exclude=o.get("exclude") or [],
             use_stackables=bool(o.get("use_stackables", False)),
@@ -311,7 +312,8 @@ class Session:
                                        "art": art_for(it), "quality": it.quality_name}
                                       for it in st.tabs[int(tab) - 1].items]
         files = ({m.dst_file for m in p.moves} | {m.src_file for m in p.moves} | {m.src_file for m in p.merges}
-                 | ({p.stash_file} if p.merges else set()))
+                 | ({p.stash_file} if p.merges else set()) | {d.file for d in p.deletions}
+                 | {d.file for d in p.delete_chars})
         return {
             "id": self.plan_id, "stash": p.stash_file, "mode": p.options.mode, "existing": existing,
             "moves": len(p.moves), "by_dest": by_dest, "notes": p.notes, "left_in_place": p.left_in_place,
@@ -319,10 +321,73 @@ class Session:
             "stack_counts": {k: list(v) for k, v in p.stack_counts.items()},
             "renames": [{"old": r.old, "new": r.new, "category": r.category} for r in p.renames],
             "new_mules": [{"name": n.name, "template": n.template, "category": n.category} for n in p.new_mules],
+            "deletions": [{"name": d.name, "where": d.where, "key": d.key} for d in p.deletions],
+            "delete_chars": [{"name": d.name, "file": d.file, "level": d.level} for d in p.delete_chars],
+            "emptied": p.emptied,
             "unplaced": [{"name": u.name, "category": u.category, "from": u.src_where} for u in p.unplaced],
             "mules": [vars(m) for m in p.mules], "skipped": p.skipped_chars, "labels": p.labels,
             "files_touched": len(files) + len(p.renames) + len(p.new_mules),
         }
+
+    # ---------- clean-up: duplicates and empty mules
+    def duplicates(self):
+        """Unique and set items you have more than once (top-level items only; socketed ones can't be deleted)."""
+        gd, rs = self.gd, self.ruleset()
+        groups = {}
+        for c in self.world.characters:
+            for i, it in enumerate(c.items):
+                self._dup_add(groups, it, f"{c.name} - {_where(it)}", planner.item_key(c.path.name, "items", i),
+                              it.mode == MODE_STORED and it.page in GRID_PAGES, rs)
+        for s in self.world.stashes:
+            for ti, t in enumerate(s.tabs):
+                if t.type == TAB_NORMAL:
+                    for i, it in enumerate(t.items):
+                        self._dup_add(groups, it, f"{s.path.stem} tab {ti + 1}",
+                                      planner.item_key(s.path.name, f"tab{ti}", i), True, rs)
+        out = []
+        for (kind, _), copies in groups.items():
+            if len(copies) > 1:
+                first = copies[0]
+                out.append({"kind": kind, "name": first["name"], "base": first["base"], "art": first["art"],
+                            "quality": first["quality"], "copies": copies})
+        out.sort(key=lambda g: (g["kind"], g["name"]))
+        return out
+
+    def _dup_add(self, groups, it, where, key, deletable, rs):
+        gd = self.gd
+        if it.quality == 7 and it.unique_id in gd.uniques and not it.runeword:
+            k = ("unique", it.unique_id)
+        elif it.quality == 5 and it.set_id in gd.set_items:
+            k = ("set", it.set_id)
+        else:
+            return
+        j = self.item_json(it, where, key, rs=rs)
+        j["deletable"] = deletable
+        groups.setdefault(k, []).append(j)
+
+    def empty_mules(self):
+        """Characters with nothing worth keeping on them, and whether each can be deleted."""
+        opts = planner.Options()
+        out = []
+        for c in self.world.characters:
+            if not planner.is_mule_candidate(c, opts):
+                continue
+            stored = sum(1 for i in c.items if i.mode == MODE_STORED)
+            ok, reason = empty_status(c)
+            out.append({"name": c.name, "class": c.class_name, "level": c.level, "era": c.era_name,
+                        "file": c.path.name, "stored": stored, "empty": ok, "reason": reason})
+        out.sort(key=lambda m: (not m["empty"], m["stored"], m["name"].lower()))
+        return out
+
+    def plan_delete_items(self, keys):
+        self.plan = planner.plan_item_deletions(self.world, keys)
+        self.plan_id += 1
+        return self.plan_json()
+
+    def plan_delete_mules(self, names):
+        self.plan = planner.plan_mule_deletions(self.world, names)
+        self.plan_id += 1
+        return self.plan_json()
 
     def apply(self, plan_id, log=print):
         if self.plan is None or plan_id != self.plan_id:
@@ -345,9 +410,12 @@ class Session:
                 try:
                     info = json.loads(log.read_text(encoding="utf-8"))
                     entry["log"] = log.name
-                    entry["summary"] = (f"{info.get('mode', 'stash')}: {len(info.get('moves', []))} moved, "
-                                        f"{len(info.get('stacked', []))} stacked, {len(info.get('renames', []))} "
-                                        f"renamed, {len(info.get('new_mules', []))} new mule(s)")
+                    parts = [f"{len(info.get('moves', []))} moved", f"{len(info.get('stacked', []))} stacked",
+                             f"{len(info.get('renames', []))} renamed", f"{len(info.get('new_mules', []))} new mule(s)",
+                             f"{len(info.get('deleted_items', []))} item(s) deleted",
+                             f"{len(info.get('deleted_mules', []))} mule(s) deleted"]
+                    entry["summary"] = f"{info.get('mode', 'stash')}: " + ", ".join(
+                        x for x in parts if not x.startswith("0 "))
                     entry["can_undo"], entry["undo_reason"] = applier.undo_status(log, self.save_dir)
                 except (OSError, json.JSONDecodeError):
                     pass

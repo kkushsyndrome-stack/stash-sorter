@@ -40,7 +40,7 @@ TABLE_COLUMNS = {
     "weapons": _ITEM_COLS,
     "misc": _ITEM_COLS,
     "itemtypes": ["Code", "ItemType", "Equiv1", "Equiv2", "MaxSockets1", "MaxSocketsLevelThreshold1",
-                  "MaxSockets2", "MaxSocketsLevelThreshold2", "MaxSockets3"],
+                  "MaxSockets2", "MaxSocketsLevelThreshold2", "MaxSockets3", "VarInvGfx"],
     "uniqueitems": ["index", "*ID", "code", "carry1", "disabled", "spawnable", "lvl"],
     "setitems": ["index", "*ID", "set", "item", "disabled", "spawnable", "lvl"],
     "skills": ["skill", "*Id", "charclass", "skilldesc"],
@@ -227,6 +227,7 @@ class BaseItem:
     compact: bool = False
     qlvl: int = 0
     magic_lvl: int = 0
+    pictures: int = 0  # number of inventory picture variants (rings, amulets, charms, jewels)
     ancestors: frozenset = frozenset()
 
     def has(self, *type_codes):
@@ -296,7 +297,9 @@ def load(install_dir=None, data_dir=None, bundled_only=False):
                 quest=_int(r.get("quest")) > 0, quest_diff=_int(r.get("questdiffcheck")) > 0,
                 compact=_int(r.get("compactsave")) > 0, qlvl=_int(r.get("level")), magic_lvl=_int(r.get("magic lvl")))
 
+    pictures = {r["Code"]: _int(r.get("VarInvGfx")) for r in tables["itemtypes"] if r.get("Code")}
     for base in gd.items.values():
+        base.pictures = pictures.get(base.type, 0)
         anc = gd.type_ancestors(base.type)
         if base.type2:
             anc |= gd.type_ancestors(base.type2)

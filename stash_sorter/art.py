@@ -146,16 +146,23 @@ class ArtIndex:
         if ck in self._key_cache:
             return self._key_cache[ck]
         key = None
-        tier_field = {"exceptional": "uber", "elite": "ultra"}.get(tier, "normal")
+        base = self.items.get(code)
+        item = self.gd.items.get(code)
+        pictures = item.pictures if item else 0
+        plain = self._resolve(base) if base else None
         if unique_id is not None and unique_id in self.gd.uniques:
             key = self._named(self.uniques, self.gd.uniques[unique_id][3])
         if key is None and set_id is not None and set_id in self.gd.set_items:
             key = self._named(self.sets, self.gd.set_items[set_id][3])
-        base = self.items.get(code)
-        if key is None and base and gfx is not None:
-            key = self._resolve(f"{base}{gfx + 1}")
+        if pictures and key == plain:
+            key = None  # "unique art" that is just the generic base sprite: use the item's own picture instead
+        if key is None and base and pictures:
+            # items with picture variants are always shown as one of them in game (the save stores which);
+            # the unnumbered sprite is never used for them
+            n = gfx + 1 if gfx is not None and gfx < pictures else 1
+            key = self._resolve(f"{base}{n}")
         if key is None and base:
-            key = self._resolve(base)
+            key = plain
         if key is None and code in self.gd.items:
             for k in self.by_base.get(norm(self.gd.items[code].name), []):
                 key = k

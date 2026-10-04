@@ -2,19 +2,23 @@
 
 Modes
   stash       move everything from the shared stash onto mules that already hold that kind of item
-  tidy        like stash, and also move items that sit on the "wrong" mule; items already in the right
-              place stay exactly where they are (fewest files changed)
+  tidy        like stash, and also move items that sit on the "wrong" mule, then pack each category onto as
+              few mules as possible (emptying whole mules where everything fits elsewhere); items already in
+              the right place only move when that frees a mule
   reorganize  pool the stash and all mules and lay everything out again, category by category
   migrate     move the older (Resurrected-era) shared stash into the newer (RotW) one, as the game's own
               character transfer allows; it only goes forward in time
+
+Plus two clean-up plans: deleting chosen items (e.g. duplicates) and deleting empty mules.
 """
 
+import copy
 from dataclasses import dataclass, field
 
 from . import catalog as C
 from .items import MODE_STORED, PAGE_STASH, PAGE_INVENTORY, PAGE_CUBE
 from .rules import Ruleset
-from .savefiles import TAB_NORMAL, TAB_STACKABLES, valid_character_name
+from .savefiles import TAB_NORMAL, TAB_STACKABLES, valid_character_name, empty_status
 from .world import mule_status
 
 DEFAULT_GRIDS = {PAGE_STASH: (10, 10), PAGE_INVENTORY: (10, 4), PAGE_CUBE: (3, 4)}
@@ -52,6 +56,7 @@ class Options:
     keep_items: list = field(default_factory=list)     # item keys to leave where they are
     limit: int = 0                   # test run: only this many moves (and this many stack merges)
     create_mules: int = 0            # (experimental) create up to this many new mules when space runs out
+    compact: bool = True             # tidy: pack each category onto as few mules as possible
     rules: dict = None               # sorting rules (None: defaults)
     crafter_level: int = 99
 
@@ -144,6 +149,22 @@ class NewMule:
 
 
 @dataclass
+class Deletion:
+    key: str
+    name: str
+    file: str
+    where: str
+    item: object = field(repr=False, default=None)
+
+
+@dataclass
+class CharDeletion:
+    name: str
+    file: str
+    level: int
+
+
+@dataclass
 class MulePlan:
     name: str
     file: str
@@ -165,8 +186,12 @@ class Plan:
     merges: list = field(default_factory=list)
     renames: list = field(default_factory=list)
     new_mules: list = field(default_factory=list)
+    deletions: list = field(default_factory=list)      # Deletion: items to delete
+    delete_chars: list = field(default_factory=list)   # CharDeletion: empty mules to delete
     unplaced: list = field(default_factory=list)  # PoolItem (stash items with no room)
     left_in_place: int = 0                        # tidy: misplaced mule items with nowhere better to go
+    emptied: list = field(default_factory=list)   # mule names left with nothing stored after this plan
+    emptied_files: list = field(default_factory=list)
     mules: list = field(default_factory=list)     # MulePlan
     skipped_chars: list = field(default_factory=list)  # (name, reason)
     stack_counts: dict = field(default_factory=dict)   # code -> (before, after)
@@ -174,18 +199,20 @@ class Plan:
 
     @property
     def is_empty(self):
-        return not (self.moves or self.merges or self.renames or self.new_mules)
+        return not (self.moves or self.merges or self.renames or self.new_mules or self.deletions
+                    or self.delete_chars)
 
 
 class _Container:
-    """A mule character (or, when migrating, a stash tab) with free-space bookkeeping."""
+    """A mule character (or, when migrating, a stash tab): free space and exactly which items it holds."""
 
     def __init__(self, gd, name, file, grids, ch=None, tab=None, new=False):
         self.gd, self.name, self.file, self.ch, self.tab, self.new = gd, name, file, ch, tab, new
         self.grids = grids
         self.pages = list(grids)
-        self.carry = {}  # carry-one group -> count
-        self.contents = []  # categories of items that end up stored here
+        self.carry = {}     # carry-one group -> count
+        self.contents = []  # categories of items stored here (one entry per item)
+        self.held = {}      # id(item) -> [item, page, x, y, category, fixed]
         self.original = []  # categories it held before planning
         self.category = None
         self.claimed = False
@@ -198,10 +225,21 @@ class _Container:
         pages = [p for p in (PAGE_STASH, PAGE_INVENTORY, PAGE_CUBE) if p != PAGE_CUBE or has_cube]
         return cls(gd, ch.name, ch.path.name, {p: Grid(*DEFAULT_GRIDS[p]) for p in pages}, ch=ch, new=new)
 
-    def occupy(self, it, page, x, y, value=True):
+    def add(self, it, page, x, y, category, fixed=False):
         w, h = C.item_size(it, self.gd)
         if page in self.grids:
-            self.grids[page].mark(x, y, w, h, value)
+            self.grids[page].mark(x, y, w, h)
+        self.add_carry(it)
+        self.contents.append(category)
+        self.held[id(it)] = [it, page, x, y, category, fixed]
+
+    def remove(self, it):
+        _, page, x, y, category, _ = self.held.pop(id(it))
+        w, h = C.item_size(it, self.gd)
+        if page in self.grids:
+            self.grids[page].mark(x, y, w, h, False)
+        self.add_carry(it, -1)
+        self.contents.remove(category)
 
     def add_carry(self, it, n=1):
         g = C.carry_one_group(it, self.gd)
@@ -216,9 +254,7 @@ class _Container:
         for page in self.pages:
             spot = self.grids[page].find(w, h)
             if spot:
-                self.grids[page].mark(spot[0], spot[1], w, h)
-                self.add_carry(it)
-                self.contents.append(category)
+                self.add(it, page, spot[0], spot[1], category)
                 return page, spot[0], spot[1]
         return None
 
@@ -238,6 +274,18 @@ class _Container:
             return None
         best = max(set(self.original), key=lambda c: (self.original.count(c), c))
         return best if self.original.count(best) * 2 >= len(self.original) else None
+
+    def snapshot(self):
+        return ([row[:] for g in self.grids.values() for row in g.cells], dict(self.carry), list(self.contents),
+                {k: list(v) for k, v in self.held.items()}, self.category)
+
+    def restore(self, snap):
+        rows, self.carry, self.contents, self.held, self.category = snap
+        i = 0
+        for g in self.grids.values():
+            for r in range(g.h):
+                g.cells[r] = rows[i]
+                i += 1
 
 
 def item_key(file_name, container, index):
@@ -269,6 +317,8 @@ class _Planner:
         self.pool = []
         self.claims = 0
         self.origin_counts = {}
+        self.moves_by_item = {}  # id(item) -> Move (an item moves at most once; later moves update it)
+        self.origin_spot = {}    # id(item) -> (file, page, x, y) where it is on disk
 
     # ---------- inputs
     def _pool_add(self, it, key, src_file, src_where, origin=None):
@@ -289,6 +339,7 @@ class _Planner:
                 if key in self.keep_items or self.rules.categorize(it) in self.opts.keep_in_stash:
                     continue
                 label = "stash" if stash is self.stash else stash.path.stem
+                self.origin_spot[id(it)] = (stash.path.name, None, it.x, it.y)
                 self._pool_add(it, key, stash.path.name, f"{label} tab {ti + 1} ({it.x},{it.y})")
 
     def select_mules(self):
@@ -319,13 +370,15 @@ class _Planner:
                 if stored_on_grid:
                     m.items_before += 1
                     m.original.append(cat)
+                    self.origin_spot[id(it)] = (m.file, it.page, it.x, it.y)
                 if pool_mode == "all" and stored_on_grid and it.code != "box" and key not in self.keep_items:
                     self._pool_add(it, key, m.file, f"{m.name} {PAGE_LABEL[it.page]} ({it.x},{it.y})", origin=m)
                     continue
-                m.add_carry(it)
                 if stored_on_grid:
-                    m.occupy(it, it.page, it.x, it.y)
-                    m.contents.append(cat)
+                    fixed = it.code == "box" or key in self.keep_items
+                    m.add(it, it.page, it.x, it.y, cat, fixed)
+                else:
+                    m.add_carry(it)
 
     # ---------- stacking into the Stackables tab
     def plan_stacking(self):
@@ -411,6 +464,13 @@ class _Planner:
                     order.insert(last, cat)
         return order
 
+    def _homes(self, cat, exclude=None):
+        """Mules an item of `cat` may go to: its own category's, then the ones it may spill over to."""
+        out = [m for m in self.containers if m.category == cat and m is not exclude]
+        out += [m for fb in self.rules.share_with(cat) for m in self.containers
+                if m.category == fb and m is not exclude]
+        return out
+
     def place_all(self, items_by_cat, tidy=False):
         """Place pool items category by category. Returns the items that found no spot."""
         rules = self.rules
@@ -419,10 +479,9 @@ class _Planner:
             items = sorted(items_by_cat.get(cat, []), key=lambda p: rules.sort_key(p.item, cat))
             for p in items:
                 spot, dest = None, None
-                targets = [m for m in self.containers if m.category == cat and m is not p.origin]
-                targets += [m for fb in rules.share_with(cat) for m in self.containers
-                            if m.category == fb and m is not p.origin]
-                for m in targets:
+                # when re-sorting, an item's own (now emptied) mule is a perfectly good destination;
+                # when tidying, its current mule is the one it is leaving
+                for m in self._homes(cat, exclude=p.origin if tidy else None):
                     spot = m.place(p.item, cat)
                     if spot:
                         dest = m
@@ -437,22 +496,24 @@ class _Planner:
                     left.append(p)
                     continue
                 if p.origin is not None and tidy:
-                    p.origin.occupy(p.item, p.item.page, p.item.x, p.item.y, False)
-                    p.origin.contents.remove(p.category)
-                    p.origin.add_carry(p.item, -1)
-                self._record_move(p, dest, spot)
+                    p.origin.remove(p.item)
+                self._record_move(p.item, p.key, p.name, cat, p.src_file, p.src_where, dest, spot)
         return left
 
-    def _record_move(self, p, dest, spot):
+    def _record_move(self, item, key, name, cat, src_file, src_where, dest, spot):
         page, x, y = spot
-        if p.src_file == dest.file and dest.tab is None and (p.item.page, p.item.x, p.item.y) == (page, x, y):
-            return  # already exactly there
+        existing = self.moves_by_item.pop(id(item), None)
+        if existing is not None:
+            self.plan.moves.remove(existing)
+        on_disk = self.origin_spot.get(id(item))
+        if dest.tab is None and on_disk == (dest.file, page, x, y):
+            return  # back exactly where it already is
         if dest.tab is not None:
-            self.plan.moves.append(Move(p.key, p.name, p.category, p.src_file, p.src_where, dest.file, "",
-                                        PAGE_STASH, x, y, dst_tab=dest.tab, item=p.item))
+            mv = Move(key, name, cat, src_file, src_where, dest.file, "", PAGE_STASH, x, y, dst_tab=dest.tab, item=item)
         else:
-            self.plan.moves.append(Move(p.key, p.name, p.category, p.src_file, p.src_where, dest.file, dest.name,
-                                        page, x, y, item=p.item))
+            mv = Move(key, name, cat, src_file, src_where, dest.file, dest.name, page, x, y, item=item)
+        self.plan.moves.append(mv)
+        self.moves_by_item[id(item)] = mv
 
     # ---------- modes
     def run(self):
@@ -474,10 +535,16 @@ class _Planner:
             self.plan.unplaced = self.place_all(by_cat)
         else:
             self._tidy(by_cat)
+            if self.opts.compact:
+                self._compact()
         self._limit()
         self._renames()
         self._summaries()
         return self.plan
+
+    def _misplaced(self, m, cat):
+        """Is an item of `cat` out of place on mule m?"""
+        return cat != m.category and m.category not in self.rules.share_with(cat)
 
     def _tidy(self, stash_by_cat):
         # each mule keeps the job it mostly does (plurality); items that don't fit that job are candidates to move
@@ -488,11 +555,11 @@ class _Planner:
             if m.category is None:
                 continue
             for idx, it in enumerate(m.ch.items):
-                if it.mode != MODE_STORED or it.page not in m.grids or it.code == "box":
+                if id(it) not in m.held or m.held[id(it)][5]:
                     continue
                 key = item_key(m.file, "items", idx)
-                cat = self.rules.categorize(it)
-                if cat != m.category and key not in self.keep_items:
+                cat = m.held[id(it)][4]
+                if self._misplaced(m, cat):
                     misplaced.append(PoolItem(it, key, m.file, f"{m.name} {PAGE_LABEL[it.page]} ({it.x},{it.y})",
                                               cat, C.display_name(it, self.gd, self.names), origin=m))
         by_cat = {k: list(v) for k, v in stash_by_cat.items()}
@@ -512,6 +579,57 @@ class _Planner:
                 break
         self.plan.unplaced = [p for p in left if p.origin is None]
         self.plan.left_in_place = sum(1 for p in left if p.origin is not None)
+
+    def _compact(self):
+        """Empty whole mules by moving everything on the emptiest mule of a category into gaps on the others."""
+        progress = True
+        while progress:
+            progress = False
+            for cat in self._process_order():
+                mules = sorted((m for m in self.containers if m.category == cat and m.held),
+                               key=lambda m: (m.cells()[0], m.name.lower()))
+                if len(mules) < 2:
+                    continue
+                for victim in mules:
+                    if self._evacuate(victim):
+                        progress = True
+                        break
+                if progress:
+                    break
+
+    def _evacuate(self, victim):
+        """Move every item off `victim` if (and only if) all of them fit somewhere sensible."""
+        entries = list(victim.held.values())
+        if any(fixed for *_, fixed in entries):
+            return False
+        snaps = {id(m): m.snapshot() for m in self.containers}
+        placed = []
+        # largest first packs best; the victim may hold a mix of categories, so only compare sizes
+        entries.sort(key=lambda e: (-C.item_size(e[0], self.gd)[1], -C.item_size(e[0], self.gd)[0]))
+        for it, page, x, y, cat, _ in entries:
+            homes = sorted(self._homes(cat, exclude=victim), key=lambda m: -m.cells()[0])  # fullest first
+            spot = None
+            for m in homes:
+                spot = m.place(it, cat)
+                if spot:
+                    placed.append((it, cat, m, spot))
+                    break
+            if spot is None:
+                for m in self.containers:
+                    m.restore(snaps[id(m)])
+                return False
+        for it, cat, m, spot in placed:
+            victim.remove(it)
+            prev = self.moves_by_item.get(id(it))  # set when the item only arrived here earlier in this plan
+            if prev:
+                src_file, src_where, key = prev.src_file, prev.src_where, prev.key
+            else:
+                idx = next(i for i, x in enumerate(victim.ch.items) if x is it)
+                src_file, key = victim.file, item_key(victim.file, "items", idx)
+                src_where = f"{victim.name} {PAGE_LABEL[it.page]} ({it.x},{it.y})"
+            self._record_move(it, key, C.display_name(it, self.gd, self.names), cat, src_file, src_where, m, spot)
+        victim.category = None
+        return True
 
     def _migrate(self):
         target = self.stash
@@ -533,7 +651,7 @@ class _Planner:
                 continue
             c = _Container(self.gd, f"tab {ti + 1}", target.path.name, {PAGE_STASH: Grid(*STASH_TAB_GRID)}, tab=ti)
             for it in tab.items:
-                c.occupy(it, PAGE_STASH, it.x, it.y)
+                c.add(it, PAGE_STASH, it.x, it.y, "*", fixed=True)
             self.containers.append(c)
         order = self.rules.order
         left = []
@@ -541,7 +659,7 @@ class _Planner:
             for c in self.containers:
                 spot = c.place(p.item, p.category)
                 if spot:
-                    self._record_move(p, c, spot)
+                    self._record_move(p.item, p.key, p.name, p.category, p.src_file, p.src_where, c, spot)
                     break
             else:
                 left.append(p)
@@ -587,7 +705,7 @@ class _Planner:
             return
         order = self.rules.order
         involved = {m.dst_char for m in self.plan.moves} if opts.limit else None
-        to_rename = [m for m in self.containers if m.category in order and not m.new
+        to_rename = [m for m in self.containers if m.category in order and not m.new and m.held
                      and (m.claimed or opts.rename == "all") and (involved is None or m.name in involved)]
         to_rename.sort(key=lambda m: (order.index(m.category), not m.claimed, m.claim_order, m.name.lower()))
         renaming = {m.name.lower() for m in to_rename}
@@ -612,7 +730,59 @@ class _Planner:
             used, total = m.cells()
             self.plan.mules.append(MulePlan(m.name, m.file, m.category or m.dominant() or "", m.claimed,
                                             m.items_before, len(m.contents), used, total, new=m.new))
+            if m.ch is not None and m.items_before and not m.held and not self.opts.limit:
+                self.plan.emptied.append(m.name)
+                self.plan.emptied_files.append(m.file)
 
 
 def make_plan(world, opts: Options):
     return _Planner(world, opts).run()
+
+
+# ---------------------------------------------------------------------------------------------- clean-up plans
+def find_item(world, key):
+    """(item, owner, where, deletable reason) for an item key, or raises KeyError."""
+    file_name, container, idx = key.split("|")
+    idx = int(idx)
+    for ch in world.characters:
+        if ch.path.name == file_name and container == "items":
+            it = ch.items[idx]
+            where = f"{ch.name} {PAGE_LABEL.get(it.page, 'equipped') if it.mode == MODE_STORED else 'equipped/belt'}"
+            ok = it.mode == MODE_STORED and it.page in DEFAULT_GRIDS
+            return it, ch, where, "" if ok else "equipped or in the belt - take it off in game first"
+    for st in world.stashes:
+        if st.path.name == file_name and container.startswith("tab"):
+            ti = int(container[3:])
+            tab = st.tabs[ti]
+            if tab.type != TAB_NORMAL:
+                raise KeyError(key)
+            return tab.items[idx], st, f"{st.path.stem} tab {ti + 1}", ""
+    raise KeyError(key)
+
+
+def plan_item_deletions(world, keys, stash_file=None):
+    """A plan that deletes the chosen items (e.g. duplicates you don't want)."""
+    stash = world.stash(stash_file) if stash_file else world.default_stash()
+    plan = Plan(options=Options(mode="delete-items"), stash_file=stash.path.name if stash else "")
+    for key in dict.fromkeys(keys):
+        it, owner, where, problem = find_item(world, key)
+        if problem:
+            raise ValueError(f"{C.display_name(it, world.gd, world.names)}: {problem}")
+        plan.deletions.append(Deletion(key, C.display_name(it, world.gd, world.names), owner.path.name, where, item=it))
+    return plan
+
+
+def plan_mule_deletions(world, names, max_level=1):
+    """A plan that deletes the chosen empty mules (character files and their side files)."""
+    plan = Plan(options=Options(mode="delete-mules"), stash_file="")
+    for name in dict.fromkeys(n.lower() for n in names):
+        ch = next((c for c in world.characters if c.name.lower() == name or c.path.stem.lower() == name), None)
+        if ch is None:
+            raise ValueError(f"no character called {name}")
+        ok, reason = empty_status(ch)
+        if not ok:
+            raise ValueError(f"{ch.name} is not empty: {reason}")
+        if ch.level > max_level and "mule" not in ch.name.lower():
+            raise ValueError(f"{ch.name} is level {ch.level}, which doesn't look like a mule")
+        plan.delete_chars.append(CharDeletion(ch.name, ch.path.name, ch.level))
+    return plan

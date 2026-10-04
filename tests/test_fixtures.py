@@ -21,7 +21,7 @@ from stash_sorter.apply import _identity  # noqa: E402
 from stash_sorter.bits import BitReader, set_bits, get_bits  # noqa: E402
 from stash_sorter.describe import Describer, fmt  # noqa: E402
 from stash_sorter.rules import Ruleset, RulesError, load_default_rules, validate  # noqa: E402
-from stash_sorter.savefiles import parse_character, parse_stash, valid_character_name  # noqa: E402
+from stash_sorter.savefiles import parse_character, parse_stash, valid_character_name, empty_status  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "hlb"
 GD = gamedata.load(bundled_only=True)
@@ -181,6 +181,81 @@ class Sandbox(unittest.TestCase):
         _, after, _ = census(self.saves)
         self.assertEqual(before, after)
         self.assertFalse(list(self.saves.glob("*.stash-sorter.new")))
+
+    def _mules(self):
+        w = W.load_world(self.saves, GD)
+        return w, [c.name for c in w.characters if c.era == w.stash("ModernSharedStashSoftCoreV2.d2i").era]
+
+    def test_reorganize_uses_one_mule_for_small_categories(self):
+        w, mules = self._mules()
+        pl = planner._Planner(w, planner.Options(mode="reorganize", stash_file="ModernSharedStashSoftCoreV2.d2i",
+                                                 mules=mules))
+        pl.run()
+        by = collections.defaultdict(list)
+        for m in pl.containers:
+            if m.held and m.category:  # mules holding only a Horadric Cube (never moved) have no category
+                by[m.category].append(m)
+        for cat, ms in by.items():
+            if sum(m.cells()[0] for m in ms) <= 70 and cat != "unicharms":
+                self.assertEqual(len(ms), 1, f"{cat} spread over {len(ms)} mules")
+
+    def test_tidy_compacts_and_reports_emptied_mules(self):
+        plan, _ = self._apply(mode="tidy", compact=True)
+        w = W.load_world(self.saves, GD)
+        for file in plan.emptied_files:
+            ch = next(c for c in w.characters if c.path.name == file)
+            self.assertFalse([i for i in ch.items if i.mode == 0 and i.page in (1, 4, 5)], file)
+
+    def _empty_mule(self, name):
+        """Write an empty copy of a fixture character (like a freshly made level-1 mule)."""
+        w = W.load_world(self.saves, GD)
+        template = next((c for c in w.characters if c.can_be_template and c.era == 3), None)
+        if template is None:
+            self.skipTest("no fixture can serve as an empty mule")
+        c = A._with_name(template, name)
+        c.items = []
+        (self.saves / f"{name}.d2s").write_bytes(c.to_bytes())
+        for p in self.saves.glob(template.path.stem + ".*"):
+            if p.suffix != ".d2s":
+                (self.saves / f"{name}{p.suffix}").write_bytes(p.read_bytes())
+
+    def test_delete_empty_mule_then_undo(self):
+        self._empty_mule("SpareMule")
+        before = self._snapshot()
+        w = W.load_world(self.saves, GD)
+        self.assertTrue(empty_status(w.character("SpareMule"))[0])
+        busy = next(c for c in w.characters if c.items and c.level > 1)
+        with self.assertRaises(ValueError):
+            planner.plan_mule_deletions(w, [busy.name], max_level=99)
+        plan = planner.plan_mule_deletions(w, ["SpareMule"])
+        res = A.apply_plan(w, plan, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertFalse(list(self.saves.glob("SpareMule.*")))
+        A.undo_apply(res["log"], self.saves, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_duplicates_and_delete_one_copy(self):
+        from stash_sorter.service import Session
+        w = W.load_world(self.saves, GD)
+        src = max((c for c in w.characters if c.era == 3),
+                  key=lambda c: sum(1 for i in c.items if i.quality in (5, 7) and i.mode == 0))
+        twin = A._with_name(src, "TwinMule")  # same items twice -> every unique/set on it is a duplicate
+        (self.saves / "TwinMule.d2s").write_bytes(twin.to_bytes())
+        s = Session(saves=self.saves, backups=self.backups)
+        s.gd = GD
+        s.reload()
+        groups = s.duplicates()
+        if not groups:
+            self.skipTest("fixture has no stored unique or set items")
+        copy_ = next(c for g in groups for c in g["copies"] if c["deletable"])
+        _, before, _ = census(self.saves)
+        before_files = self._snapshot()
+        p = s.plan_delete_items([copy_["key"]])
+        self.assertEqual(len(p["deletions"]), 1)
+        res = A.apply_plan(s.world, s.plan, self.backups, log=lambda m: None, skip_game_check=True)
+        _, after, _ = census(self.saves)
+        self.assertEqual(sum(before.values()) - 1, sum(after.values()))
+        A.undo_apply(res["log"], self.saves, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertEqual(self._snapshot(), before_files)
 
     def test_refuses_backups_inside_saves(self):
         with self.assertRaises(A.ApplyError):

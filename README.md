@@ -1,5 +1,7 @@
 # Stash Sorter
 
+![Stash Sorter](docs/social-preview.png)
+
 Empty your **Diablo II: Resurrected** shared stash onto your mules — sorted by category, with mules renamed to
 match what they hold — find any item across every character, track your holy grail, and see what your items'
 **item levels** are good for (crafting, rerolling, sockets).
@@ -11,7 +13,8 @@ Runs locally on your PC; nothing is uploaded anywhere.
 
 **Sort & distribute** (preview first, then apply):
 - **Empty the shared stash** onto mules that already hold that kind of loot; empty mules get a new job.
-- **Tidy up** — also move items that sit on the wrong mule; items already in the right place stay put.
+- **Tidy up** — also move items that sit on the wrong mule, then pack each kind of loot onto as few mules as
+  possible, emptying whole mules where everything fits elsewhere. Far fewer moves than a full re-sort.
 - **Full re-sort** — lay out the stash and every mule again, category by category.
 - **Bring the old stash forward** — move the Resurrected-era shared stash into the RotW one (forward only, like
   the game's character transfer). Gold stays where it is.
@@ -32,6 +35,13 @@ Runs locally on your PC; nothing is uploaded anywhere.
   - *Keep as-is*: flags magic items that already have the best tier of valuable affixes (e.g. a +3 skill tab
     amulet "of the Whale"), so they're filed with your jewelry instead of being thrown into the cube.
   - All thresholds come from the game's own tables.
+
+**Clean up:**
+- **Duplicates**: every unique and set item you have more than once, with each copy's stats side by side so you
+  can keep the best roll and delete the rest.
+- **Empty mules**: mules with nothing on them but their starting gear (no items, gold or mercenary). After a tidy
+  up, the preview tells you which mules will be empty; delete the ones you don't need.
+- Deleting is previewed, backed up, verified and undoable like everything else.
 
 **Sorting rules** you can edit in the app: reorder categories, rename them, switch them off, or change their
 conditions. Defaults: runes, gems, materials, rings & amulets, craft bait, unique charms (Anni/Torch/Gheed's/
@@ -75,8 +85,9 @@ download this folder, and double-click **`Stash Sorter.bat`** — or run `python
 3. **Sort & Distribute** — pick a mode, **Preview plan**, check where things go, then **Apply**.
    New to it? Set *Test run* to "Just 1 item" first.
 4. **Find**, **Collection**, **Item Levels** — browse and search.
-5. **Sorting Rules** — change how items are categorised and what mules are called.
-6. **Backups** — undo a change or restore a backup.
+5. **Clean Up** — delete duplicate uniques/sets you don't need, and empty mules.
+6. **Sorting Rules** — change how items are categorised and what mules are called.
+7. **Backups** — undo a change or restore a backup.
 
 ### Command line
 
@@ -87,6 +98,10 @@ python -m stash_sorter apply --mode stash --limit 1          # test run: move on
 python -m stash_sorter apply --mode stash --rename new       # do it (asks for confirmation)
 python -m stash_sorter plan --mode migrate                   # old stash -> RotW stash
 python -m stash_sorter find harlequin                        # where is my Shako?
+python -m stash_sorter dupes                                 # duplicate uniques/sets (with item keys)
+python -m stash_sorter delete-items KEY [KEY ...]            # delete chosen copies (asks first)
+python -m stash_sorter empty-mules                           # which mules are empty
+python -m stash_sorter delete-mules NAME [NAME ...]          # delete empty mules (asks first)
 python -m stash_sorter assess --kind craft --crafter-level 95
 python -m stash_sorter backups / undo <log> / restore <zip> / recover
 python -m stash_sorter rules [--load my_rules.json | --reset]

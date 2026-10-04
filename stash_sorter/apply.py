@@ -25,7 +25,7 @@ from . import catalog as C
 from .bits import set_bits
 from .items import MODE_STORED, POS_MODE, POS_EQUIPPED, POS_X, POS_Y, POS_PAGE, PAGE_STASH
 from .planner import DEFAULT_GRIDS, STASH_TAB_GRID, STACK_MAX
-from .savefiles import parse_character, parse_stash, valid_character_name, TAB_STACKABLES, TAB_NORMAL
+from .savefiles import parse_character, parse_stash, valid_character_name, empty_status, TAB_STACKABLES, TAB_NORMAL
 
 GAME_PROCESSES = ("D2R.exe",)
 JOURNAL = "journal.json"
@@ -288,7 +288,14 @@ class _Change:
             c.items = []
             c.path = template.path.with_name(nm.name + ".d2s")
             self.created[nm.name] = (template, c)
-        for m in plan.moves + plan.merges:
+        for d in plan.delete_chars:
+            ch = next((c for c in w.characters if c.path.name == d.file), None)
+            if ch is None:
+                raise ApplyError(f"{d.name} no longer exists")
+            ok, reason = empty_status(ch)
+            if not ok:
+                raise ApplyError(f"{d.name} is not empty any more: {reason}")
+        for m in plan.moves + plan.merges + plan.deletions:
             self._remove(m.item)
         for m in plan.moves:
             it = _clone(m.item)
@@ -339,6 +346,10 @@ class _Change:
                 for p in self.world.save_dir.iterdir():
                     if p.is_file() and p.stem.lower() == ch.path.stem.lower() and p.suffix.lower() != ".d2s":
                         renames.append((p, p.with_name(c.path.stem + p.suffix)))
+        for d in self.plan.delete_chars:  # an empty mule: its save and all of its side files
+            for p in self.world.save_dir.iterdir():
+                if p.is_file() and p.stem.lower() == Path(d.file).stem.lower():
+                    deletes.append(p)
         for name, (template, c) in self.created.items():
             writes[c.path] = c.to_bytes()
             for p in self.world.save_dir.iterdir():  # copy the template's side files (key bindings etc.)
@@ -413,6 +424,8 @@ class _Change:
         for m in plan.merges:
             before_ids[_identity(m.item)] -= 1
             before_stacks[m.code] += 1
+        for d in plan.deletions:  # deleted on purpose: they must be gone, and nothing else
+            before_ids[_identity(d.item)] -= 1
         if +before_ids != +after_ids:
             lost = sum((before_ids - after_ids).values())
             gained = sum((after_ids - before_ids).values())
@@ -456,6 +469,8 @@ def apply_plan(world, plan, backup_root, log=print, skip_game_check=False):
         "stacked": [{"item": m.name, "from": m.src_where} for m in plan.merges],
         "renames": [{"old": r.old, "new": r.new} for r in plan.renames],
         "new_mules": [{"name": n.name, "template": n.template} for n in plan.new_mules],
+        "deleted_items": [{"item": d.name, "from": d.where} for d in plan.deletions],
+        "deleted_mules": [d.name for d in plan.delete_chars],
         "files_before": sorted(existed),
         "files_after": after,
         "written": {Path(p).name: _sha(d) for p, d in writes.items()},
@@ -464,7 +479,8 @@ def apply_plan(world, plan, backup_root, log=print, skip_game_check=False):
     log_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     summary["log"] = str(log_path)
     log(f"Done: {len(plan.moves)} moved, {len(plan.merges)} stacked, {len(plan.renames)} renamed, "
-        f"{len(plan.new_mules)} new mule(s).")
+        f"{len(plan.new_mules)} new mule(s), {len(plan.deletions)} item(s) and {len(plan.delete_chars)} mule(s) "
+        "deleted.")
     return summary
 
 

@@ -21,6 +21,7 @@ TAB_NORMAL, TAB_STACKABLES, TAB_CHRONICLE = 0, 1, 2
 # a character file is only used as a template for new mules when its tail is exactly one of these.
 EMPTY_TAILS = (b"JM\x00\x00jfkf\x00\x01\x00lf\x00\x00", b"JM\x00\x00jfkf\x00")
 STAT_GOLD, STAT_GOLD_BANK = 14, 15
+F_STARTER = 0x00020000  # item flag: part of a new character's starting gear
 
 
 class SaveFormatError(Exception):
@@ -222,3 +223,18 @@ VALID_NAME = re.compile(r"^(?=.{2,15}$)[A-Za-z]+(?:[-_][A-Za-z]+)?$")
 
 def valid_character_name(name):
     return bool(VALID_NAME.match(name))
+
+
+def empty_status(ch):
+    """(is_empty, reason): nothing stored, no gold, no merc/corpse/golem, and only the starting gear on it."""
+    stored = sum(1 for i in ch.items if i.mode == MODE_STORED)
+    if stored:
+        return False, f"holds {stored} item(s)"
+    other = sum(1 for i in ch.items if not i.flags & F_STARTER)
+    if other:
+        return False, f"wears or carries {other} item(s) that aren't starting gear"
+    if ch.gold:
+        return False, f"has {ch.gold:,} gold"
+    if ch.tail not in EMPTY_TAILS:
+        return False, "has a mercenary, corpse or golem"
+    return True, "empty"
