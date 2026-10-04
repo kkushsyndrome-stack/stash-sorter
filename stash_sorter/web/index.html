@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stash Sorter</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <h1>⚜ Stash Sorter</h1>
+  <nav id="nav">
+    <button data-s="overview" class="active">Overview</button>
+    <button data-s="stash">Shared Stash</button>
+    <button data-s="sort">Sort &amp; Distribute</button>
+    <button data-s="find">Find</button>
+    <button data-s="grail">Collection</button>
+    <button data-s="assess">Item Levels</button>
+    <button data-s="rules">Sorting Rules</button>
+    <button data-s="backups">Backups</button>
+  </nav>
+  <div class="status"><span id="gameStatus"></span><button class="btn" id="reloadBtn" title="Re-read all save files">↻ Reload saves</button></div>
+</header>
+<main>
+  <div id="banner"></div>
+
+  <section id="overview" class="active">
+    <div class="grid-cards" id="ovCards"></div>
+    <div class="card">
+      <h2>Characters</h2>
+      <p class="muted small">Ticked characters are used as mules: by default every level-1 character, plus any with "mule" in the name, that can use the selected stash. Click a row to look inside.</p>
+      <div class="row" style="margin-bottom:8px">
+        <div class="field"><label>Mule = level at or below</label><input type="number" id="muleLevel" min="1" max="99" value="1"></div>
+        <label class="check"><input type="checkbox" id="muleHint" checked> …or "mule" in the name</label>
+        <button class="btn" id="resetMules">Reset selection</button>
+      </div>
+      <div class="table-wrap"><table id="charTable"></table></div>
+    </div>
+    <div class="card" id="charView" style="display:none"></div>
+  </section>
+
+  <section id="stash">
+    <div class="card">
+      <h2>Shared stash</h2>
+      <div class="row" style="margin-bottom:10px">
+        <div class="field"><label>Stash file</label><select id="stashSel"></select></div>
+        <p class="muted small" style="margin:0">Click an item to <b>keep it in the stash</b> (⚑) — sorting leaves it alone. Dashed borders are ethereal.</p>
+      </div>
+      <div id="stashNote"></div>
+      <div class="tabsel" id="stashTabs"></div>
+      <div id="stashBody"></div>
+    </div>
+  </section>
+
+  <section id="sort">
+    <div class="card">
+      <h2>Sort &amp; distribute</h2>
+      <div class="modes" id="modes">
+        <label class="mode"><input type="radio" name="mode" value="stash" checked><b>Empty the shared stash</b><span>Move stash items onto mules that already hold that kind of loot.</span></label>
+        <label class="mode"><input type="radio" name="mode" value="tidy"><b>Tidy up</b><span>Empty the stash <i>and</i> move items sitting on the wrong mule. Items already in the right place don't move.</span></label>
+        <label class="mode"><input type="radio" name="mode" value="reorganize"><b>Full re-sort</b><span>Lay out the stash and every mule again, category by category. Changes many files.</span></label>
+        <label class="mode"><input type="radio" name="mode" value="migrate"><b>Bring the old stash forward</b><span>Move your Resurrected-era shared stash into the RotW one (as a character transfer would). Gold stays put.</span></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div class="field"><label>Rename mules</label>
+          <select id="rename"><option value="new">Only mules that get a new job</option><option value="all">All mules, by category</option><option value="none">Don't rename</option></select></div>
+        <div class="field"><label>Keep these in the stash</label>
+          <details class="keepbox"><summary id="keepSummary">Nothing — move everything</summary><div id="keepCats"></div></details></div>
+        <div class="field"><label>Test run</label>
+          <select id="limit"><option value="0">Off — do everything</option><option value="1">Just 1 item</option><option value="5">Just 5 items</option></select></div>
+        <div class="field"><label>When mules run out</label>
+          <select id="createMules"><option value="0">Report it (make new characters yourself)</option><option value="3">Create up to 3 new mules (experimental)</option><option value="10">Create up to 10 new mules (experimental)</option></select></div>
+      </div>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="stackables"> Stack runes, gems &amp; materials into the RotW Stackables tab <span class="pill warn">beta — try a test run first</span></label>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="planBtn">Preview plan</button>
+        <span class="muted small">Nothing is changed until you press Apply on a preview.</span>
+      </div>
+    </div>
+    <div id="planOut"></div>
+  </section>
+
+  <section id="find">
+    <div class="card">
+      <h2>Find an item</h2>
+      <div class="row">
+        <div class="field grow"><label>Search names, stats and locations</label><input type="text" id="q" placeholder="e.g. shako, enigma, faster cast, 20 to life, CharmMule"></div>
+        <div class="field"><label>Quality</label><select id="fq"><option value="">Any</option></select></div>
+        <div class="field"><label>Category</label><select id="fc"><option value="">Any</option></select></div>
+        <label class="check"><input type="checkbox" id="fEquipped"> include equipped</label>
+      </div>
+    </div>
+    <div class="card"><div id="findCount" class="small muted" style="margin-bottom:8px"></div><div id="findOut" class="results"></div></div>
+  </section>
+
+  <section id="grail">
+    <div class="card">
+      <h2>Collection</h2>
+      <div class="row">
+        <div class="tabsel" id="grailTabs" style="margin:0">
+          <button class="btn active" data-g="uniques">Uniques</button><button class="btn" data-g="sets">Set items</button><button class="btn" data-g="runewords">Runewords made</button>
+        </div>
+        <div class="field"><label>Show</label><select id="gShow"><option value="all">Everything</option><option value="missing">Missing only</option><option value="found">Found only</option></select></div>
+        <div class="field grow"><label>Search</label><input type="text" id="gq" placeholder="name or base"></div>
+      </div>
+      <div id="grailSummary" style="margin-top:10px"></div>
+    </div>
+    <div class="card"><div id="grailOut" class="grail"></div></div>
+  </section>
+
+  <section id="assess">
+    <div class="card">
+      <h2>Item levels</h2>
+      <p class="muted small">What each item's <b>item level</b> means, from the game's own affix tables.
+        <b>Craft bait</b> (magic rings &amp; amulets): crafted item level = ⌊crafter level ÷ 2⌋ + ⌊ingredient ilvl ÷ 2⌋, so craft with a high-level character.
+        <b>Reroll</b>: "3 perfect gems + magic item" keeps the item level. <b>Bases</b>: how many sockets the item level allows.
+        <b>As-is</b> flags magic items already worth keeping (best-tier valuable affixes).</p>
+      <div class="row">
+        <div class="field"><label>Crafting character level</label><input type="number" id="crafter" min="1" max="99"></div>
+        <div class="field"><label>Look at</label><select id="scope"><option value="stash">Shared stash</option><option value="all">Shared stash + all characters</option></select></div>
+        <div class="field"><label>Kind</label><select id="kind"><option value="">All</option><option value="craft">Craft bait (rings &amp; amulets)</option><option value="reroll">Charms &amp; jewels (reroll)</option><option value="base">Bases (sockets)</option></select></div>
+        <div class="field"><label>Minimum tier</label><select id="minTier"><option value="0">Any</option><option value="1">OK or better</option><option value="2">Good or better</option><option value="3">Top only</option></select></div>
+        <label class="check"><input type="checkbox" id="keepOnly"> only "keep as-is"</label>
+        <div class="field grow"><label>Search</label><input type="text" id="search" placeholder="name or location"></div>
+      </div>
+    </div>
+    <div class="card"><div id="assessSummary" class="row" style="margin-bottom:10px"></div><div class="table-wrap"><table id="assessTable"></table></div></div>
+  </section>
+
+  <section id="rules">
+    <div class="card">
+      <h2>Sorting rules</h2>
+      <p class="muted small">Items go to the first category (top to bottom) whose conditions they match. Reorder, rename, switch categories off, or edit the conditions in the advanced editor. Saved to <span class="mono" id="rulesPath"></span>.</p>
+      <div class="table-wrap"><table id="rulesTable"></table></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="rulesSave">Save rules</button>
+        <button class="btn" id="rulesReset">Reset to defaults</button>
+        <span class="small" id="rulesMsg"></span>
+      </div>
+      <details style="margin-top:14px"><summary>Advanced: edit the rules as JSON</summary>
+        <p class="small muted" id="rulesHelp"></p>
+        <textarea id="rulesJson" spellcheck="false"></textarea>
+        <div class="row"><button class="btn" id="rulesJsonApply">Use this JSON</button></div>
+      </details>
+    </div>
+  </section>
+
+  <section id="backups">
+    <div class="card">
+      <h2>Backups</h2>
+      <p class="muted small">A full copy of your save folder is zipped before every change. <b>Undo</b> reverses just that one change (only possible while the files it touched are unchanged); <b>Restore</b> puts the whole folder back as it was. Both back up the current state first.</p>
+      <p class="small">Backup folder: <span class="mono" id="backupDir"></span></p>
+      <div class="table-wrap"><table id="backupTable"></table></div>
+    </div>
+  </section>
+</main>
+
+<div id="tip"></div>
+<div class="modal-back" id="modal"><div class="modal" id="modalBody"></div></div>
+<script>window.TOKEN = "__TOKEN__";</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
