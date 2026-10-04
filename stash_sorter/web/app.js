@@ -329,6 +329,135 @@ function renderAssess() {
   }));
 }
 
+// ---------------------------------------------------------------- Battle.net launch options
+let LN = null, lnTimer = null;
+async function loadLaunch() {
+  LN = await api("/api/launch");
+  if (!$("#lnFlags").children.length) fillLaunchForm();
+  renderLaunchStatus();
+}
+function fillLaunchForm() {
+  const p = LN.parsed || { flags: [], seed: null, mod: null, other: [] };
+  $("#lnFlags").innerHTML = Object.entries(LN.flags).map(([f, d]) =>
+    `<label class="lnflag"><input type="checkbox" value="${esc(f)}" ${p.flags.includes(f) ? "checked" : ""}><code>${esc(f)}</code><span>${esc(d)}</span></label>`).join("");
+  $("#lnSeedOn").checked = p.seed !== null; $("#lnSeed").value = p.seed ?? "";
+  const mods = [...new Set([...(LN.mods || []), ...(p.mod ? [p.mod] : [])])];
+  $("#lnMod").innerHTML = `<option value="">No mod</option>` + mods.map(m => `<option value="${esc(m)}">${esc(m)}${LN.mods.includes(m) ? "" : " (not found)"}</option>`).join("");
+  $("#lnMod").value = p.mod || "";
+  $("#lnOther").value = (p.other || []).join(" ");
+  $$("#lnFlags input").forEach(i => i.onchange = previewLaunch);
+  previewLaunch();
+}
+function renderLaunchStatus() {
+  const s = LN;
+  $("#lnStatus").innerHTML = (s.running
+    ? `<div class="notice"><b>Battle.net is running.</b> Quit it completely before saving (right-click its icon next to the clock → <b>Exit</b>), otherwise it overwrites the change when it closes. Then press <b>Check again</b>.</div>`
+    : `<div class="notice ok">Battle.net is closed — changes can be saved.</div>`) +
+    `<div class="small muted">Settings file: <span class="mono">${esc(s.config)}</span>${s.mods.length ? "" : ` · no mods found in <span class="mono">${esc(s.install)}\\mods</span>`}</div>`;
+  $("#lnCurrent").innerHTML = s.error ? `<div class="notice bad">${esc(s.error)}</div>` :
+    `<div class="lnpreview mono">${esc(s.current) || '<span class="muted">(none)</span>'}</div>` +
+    (s.parsed.problems.length ? s.parsed.problems.map(p => `<div class="notice">${esc(p)}</div>`).join("") : `<div class="small" style="color:var(--ok);margin-top:6px">Looks good.</div>`);
+  $("#lnSave").disabled = s.running || !!s.error;
+  $("#lnBackups").innerHTML = s.backups.length ? `<tr><th>Saved before a change on</th><th></th></tr>` + s.backups.map(b => {
+    const m = b.match(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
+    return `<tr><td class="small">${m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : esc(b)}</td><td><button class="btn small" data-lr="${esc(b)}">Put these back</button></td></tr>`;
+  }).join("") : `<tr><td class="muted">No changes made yet.</td></tr>`;
+  $$("[data-lr]").forEach(b => b.onclick = async () => {
+    try { LN = await api("/api/launch/restore", { backup: b.dataset.lr }); fillLaunchForm(); renderLaunchStatus(); $("#lnMsg").innerHTML = `<span style="color:var(--ok)">Put back: ${esc(LN.saved)}</span>`; }
+    catch (e) { $("#lnMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+  });
+}
+function launchForm() {
+  return { flags: $$("#lnFlags input:checked").map(i => i.value), seed: $("#lnSeedOn").checked && $("#lnSeed").value !== "" ? $("#lnSeed").value : null,
+    mod: $("#lnMod").value || null, other: $("#lnOther").value };
+}
+function previewLaunch() {
+  clearTimeout(lnTimer);
+  lnTimer = setTimeout(async () => {
+    try {
+      const r = await api("/api/launch/preview", launchForm());
+      $("#lnPreview").innerHTML = esc(r.args) || '<span class="muted">(no arguments)</span>';
+      $("#lnProblems").innerHTML = r.problems.map(p => `<div class="notice">${esc(p)}</div>`).join("");
+      $("#lnSave").dataset.args = r.args;
+    } catch (e) { $("#lnPreview").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; $("#lnSave").dataset.args = ""; }
+  }, 150);
+}
+["#lnSeed", "#lnOther"].forEach(s => $(s).oninput = previewLaunch);
+["#lnSeedOn", "#lnMod"].forEach(s => $(s).onchange = previewLaunch);
+$("#lnSeed").addEventListener("input", () => { if ($("#lnSeed").value !== "") $("#lnSeedOn").checked = true; });
+$("#lnRandom").onclick = () => { $("#lnSeed").value = Math.floor(Math.random() * 2147483647); $("#lnSeedOn").checked = true; previewLaunch(); };
+$("#lnRecheck").onclick = async () => { LN = await api("/api/launch"); renderLaunchStatus(); };
+$("#lnSave").onclick = async () => {
+  const args = $("#lnSave").dataset.args;
+  if (args === undefined) return;
+  $("#lnSave").disabled = true;
+  try {
+    LN = await api("/api/launch/save", { args });
+    renderLaunchStatus();
+    $("#lnMsg").innerHTML = `<span style="color:var(--ok)">Saved ✔ Battle.net will use: <span class="mono">${esc(LN.saved) || "(none)"}</span></span>`;
+    await loadSeeds();
+  } catch (e) { $("#lnMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; LN = await api("/api/launch"); renderLaunchStatus(); }
+};
+$("#lnStart").onclick = async () => {
+  try { await api("/api/launch/start", {}); $("#lnMsg").textContent = "Starting Diablo II: Resurrected through Battle.net…"; }
+  catch (e) { $("#lnMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+};
+
+// ---------------------------------------------------------------- favourite seeds
+let SEEDS = null;
+async function loadSeeds() { SEEDS = await api("/api/seeds"); renderSeeds(); }
+function renderSeeds() {
+  const q = $("#seedQ").value.toLowerCase(), out = $("#seedList");
+  const list = SEEDS.seeds.filter(s => !q || `${s.name} ${s.purpose} ${s.notes} ${s.seed}`.toLowerCase().includes(q));
+  if (!SEEDS.seeds.length) { out.innerHTML = `<div class="muted">No favourites yet. Type a seed above (or press <b>Random seed</b>) and press <b>★ Save this seed</b>.</div>`; return; }
+  if (!list.length) { out.innerHTML = `<div class="muted">No favourite seeds match.</div>`; return; }
+  const groups = {};
+  for (const s of list) (groups[s.purpose || "Other"] = groups[s.purpose || "Other"] || []).push(s);
+  out.innerHTML = Object.keys(groups).sort((a, b) => (a === "Other") - (b === "Other") || a.localeCompare(b)).map(g =>
+    `<div class="seedgroup"><h3>${esc(g)}</h3>${groups[g].map(s => `<div class="seedrow ${s.seed === SEEDS.in_use ? "inuse" : ""}">
+      <div><b>${esc(s.name)}</b>${s.seed === SEEDS.in_use ? ' <span class="pill ok">in use</span>' : ""}</div>
+      <span class="num">${s.seed}</span>
+      <span class="notes">${esc(s.notes)}${s.last_used ? `${s.notes ? " · " : ""}last used ${esc(s.last_used)}` : ""}</span>
+      <span class="acts"><button class="btn small" data-su="${s.id}">Use</button><button class="btn small" data-se="${s.id}">Edit</button><button class="btn small" data-sx="${s.id}">Delete</button></span>
+    </div>`).join("")}</div>`).join("");
+  $$("[data-su]").forEach(b => b.onclick = async () => {
+    const r = await api("/api/seeds/use", { id: b.dataset.su }); SEEDS = r;
+    $("#lnSeed").value = r.seed; $("#lnSeedOn").checked = true; previewLaunch(); renderSeeds();
+    $("#lnMsg").innerHTML = `Seed <b>${r.seed}</b> selected — press <b>Save to Battle.net</b> to use it.`;
+    $("#lnPreview").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  $$("[data-se]").forEach(b => b.onclick = () => seedDialog(SEEDS.seeds.find(s => s.id === b.dataset.se)));
+  $$("[data-sx]").forEach(b => b.onclick = async () => {
+    const s = SEEDS.seeds.find(x => x.id === b.dataset.sx);
+    if (!confirm(`Delete the favourite seed "${s.name}" (${s.seed})?`)) return;
+    SEEDS = await api("/api/seeds/delete", { id: s.id }); renderSeeds();
+  });
+}
+function seedDialog(existing) {
+  const seed = existing ? existing.seed : $("#lnSeed").value;
+  modal(`<h2>${existing ? "Edit favourite seed" : "Save this seed"}</h2>
+    <div class="field"><label>Name</label><input type="text" id="sdName" maxlength="80" placeholder="e.g. Pit right by the waypoint" value="${esc(existing ? existing.name : "")}"></div>
+    <div class="row" style="margin-top:10px">
+      <div class="field"><label>Seed</label><input type="number" id="sdSeed" min="0" max="4294967295" value="${esc(seed)}" style="width:170px"></div>
+      <div class="field grow"><label>What you use it for</label><input type="text" id="sdPurpose" list="sdPurposes" maxlength="60" placeholder="e.g. Cows, Pit / Tombs, Chaos Sanctuary" value="${esc(existing ? existing.purpose : "")}">
+        <datalist id="sdPurposes">${SEEDS.purposes.map(p => `<option value="${esc(p)}">`).join("")}</datalist></div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>Notes</label><textarea id="sdNotes" maxlength="500" style="min-height:80px" placeholder="e.g. Act 1 Normal, Countess tower 2 screens from the waypoint">${esc(existing ? existing.notes : "")}</textarea></div>
+    <div class="small" id="sdErr" style="color:var(--danger)"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" id="mCancel">Cancel</button><button class="btn primary" id="mGo">Save</button></div>`);
+  $("#mCancel").onclick = closeModal;
+  $("#sdName").focus();
+  $("#mGo").onclick = async () => {
+    try {
+      SEEDS = await api("/api/seeds/save", { id: existing ? existing.id : null, name: $("#sdName").value, seed: $("#sdSeed").value,
+        purpose: $("#sdPurpose").value, notes: $("#sdNotes").value });
+      closeModal(); renderSeeds();
+    } catch (e) { $("#sdErr").textContent = e.message; }
+  };
+}
+$("#lnFavSave").onclick = () => seedDialog(null);
+$("#seedQ").oninput = () => SEEDS && renderSeeds();
+
 // ---------------------------------------------------------------- terror zone clock
 let TZ = null, tzTimer = null;
 const span = ms => { const m = Math.max(0, Math.floor(ms / 60000)); if (m < 1) return "under a minute";
@@ -670,7 +799,7 @@ async function show(name) {
   $$("main section").forEach(s => s.classList.toggle("active", s.id === b.dataset.s));
   if (location.hash.slice(1).split("-")[0] !== b.dataset.s) history.replaceState(null, "", "#" + b.dataset.s);
   hideTip();
-  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup, session: loadSession, tz: () => loadTz(!TZ) };
+  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup, session: loadSession, tz: () => loadTz(!TZ), launch: async () => { await loadLaunch(); await loadSeeds(); } };
   if (loaders[b.dataset.s]) await loaders[b.dataset.s]();
 }
 $$("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.s)));

@@ -15,6 +15,7 @@
     <button data-s="sort">Sort &amp; Distribute</button>
     <button data-s="session">Session</button>
     <button data-s="tz">Terror Zones</button>
+    <button data-s="launch">Launch</button>
     <button data-s="find">Find</button>
     <button data-s="grail">Collection</button>
     <button data-s="assess">Item Levels</button>
@@ -106,6 +107,47 @@
       <div class="card"><h2>Right now</h2><div id="tzNow"></div></div>
       <div class="card"><h2>Coming up</h2><div id="tzNext"></div></div>
     </div>
+  </section>
+
+  <section id="launch">
+    <div class="card">
+      <h2>Launch options</h2>
+      <p class="muted small">The extra command line arguments Battle.net passes to Diablo II: Resurrected — the same box as Battle.net → <b>Game Settings</b> → Diablo II: Resurrected → <b>Additional command line arguments</b>.</p>
+      <div id="lnStatus"></div>
+      <h3 style="margin-top:14px">Saved in Battle.net now</h3>
+      <div id="lnCurrent"></div>
+    </div>
+    <div class="card">
+      <h2>Change them</h2>
+      <div id="lnFlags" class="lnflags"></div>
+      <div class="row" style="margin-top:12px">
+        <label class="check"><input type="checkbox" id="lnSeedOn"> Fixed map seed</label>
+        <input type="number" id="lnSeed" min="0" max="4294967295" placeholder="e.g. 1234567" style="width:170px">
+        <button class="btn small" id="lnRandom">Random seed</button>
+        <button class="btn small" id="lnFavSave">★ Save this seed</button>
+        <span class="small muted">-seed: the same offline maps every game</span>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div class="field"><label>Mod (-mod)</label><select id="lnMod"></select></div>
+        <div class="field grow"><label>Other arguments (kept as typed)</label><input type="text" id="lnOther" placeholder="anything else"></div>
+      </div>
+      <h3 style="margin-top:16px">Battle.net will get</h3>
+      <div class="lnpreview mono" id="lnPreview"></div>
+      <div id="lnProblems"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="lnSave">Save to Battle.net</button>
+        <button class="btn" id="lnRecheck">Check again</button>
+        <button class="btn" id="lnStart">Launch D2R</button>
+        <span class="small" id="lnMsg"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Favourite seeds</h2>
+      <p class="small muted">Keep the map seeds you like, grouped by what you use them for. <b>Use</b> puts a seed into the launch arguments above; then press <b>Save to Battle.net</b>.</p>
+      <div class="row"><div class="field grow"><label>Search</label><input type="text" id="seedQ" placeholder="name, purpose, notes or number"></div></div>
+      <div id="seedList" style="margin-top:10px"></div>
+    </div>
+    <div class="card"><h2>Earlier launch arguments</h2><p class="small muted">A copy of the Battle.net settings is kept before every change. Putting old arguments back changes only D2R's arguments.</p><div class="table-wrap"><table id="lnBackups"></table></div></div>
   </section>
 
   <section id="find">

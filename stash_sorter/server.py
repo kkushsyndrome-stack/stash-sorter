@@ -13,6 +13,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 from .apply import ApplyError
 from .clock import ClockError
+from .launcher import LaunchError
 from .rules import RulesError
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -88,6 +89,8 @@ def serve(session, port=0, open_browser=True):
                         "/api/empty_mules": lambda: session.empty_mules(),
                         "/api/session": lambda: session.session_state(),
                         "/api/tz": lambda: session.tz_state(),
+                        "/api/launch": lambda: session.launch_state(),
+                        "/api/seeds": lambda: session.seeds_state(),
                         "/api/session/load": lambda: session.session_load(q.get("id", "")),
                         "/api/backups": lambda: session.backups(),
                     }
@@ -111,6 +114,20 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, {"ok": True})
                     if path == "/api/plan":
                         return self._send(200, session.make_plan(body))
+                    if path == "/api/seeds/save":
+                        return self._send(200, session.seeds_save(body))
+                    if path == "/api/seeds/delete":
+                        return self._send(200, session.seeds_delete(body.get("id", "")))
+                    if path == "/api/seeds/use":
+                        return self._send(200, session.seeds_use(body.get("id", "")))
+                    if path == "/api/launch/preview":
+                        return self._send(200, session.launch_preview(body))
+                    if path == "/api/launch/save":
+                        return self._send(200, session.launch_save(body))
+                    if path == "/api/launch/restore":
+                        return self._send(200, session.launch_restore(body.get("backup", "")))
+                    if path == "/api/launch/start":
+                        return self._send(200, session.launch_game())
                     if path == "/api/tz/update":
                         return self._send(200, session.tz_update(body))
                     if path == "/api/tz/set":
@@ -148,7 +165,7 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, session.save_rules(body.get("rules")))
                     if path == "/api/rules/reset":
                         return self._send(200, session.reset_rules())
-            except (ApplyError, RulesError, ValueError, ClockError) as e:
+            except (ApplyError, RulesError, ValueError, ClockError, LaunchError) as e:
                 return self._send(409, {"error": str(e)})
             except Exception as e:
                 traceback.print_exc()

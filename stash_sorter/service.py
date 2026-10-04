@@ -12,6 +12,7 @@ from .items import MODE_STORED, MODE_EQUIPPED, MODE_BELT, PAGE_INVENTORY, PAGE_S
 from .rules import Ruleset, load_default_rules, validate, RulesError
 from .tracker import Tracker
 from .clock import TerrorClock, ClockError
+from . import launcher
 from .savefiles import TAB_NORMAL, TAB_STACKABLES, empty_status
 from .world import find_save_dir, load_world, mule_status
 
@@ -33,6 +34,7 @@ class Session:
         self.reload()
         self.crafter_level = self.max_char_level()
         self.clock = TerrorClock()
+        self.seed_book = launcher.SeedBook(paths.app_dir() / "seeds.json")
         self.clock_checked = False
         self.tracker = Tracker(self.save_dir, self.gd, self.world.names,
                                Path(sessions) if sessions else paths.app_dir() / "sessions", self._describe_found,
@@ -410,6 +412,68 @@ class Session:
 
     def backup_now(self):
         return {"backup": str(applier.backup_save_dir(self.save_dir, self.backup_dir, label="manual"))}
+
+    # ---------- Battle.net launch options
+    def _install_dir(self):
+        return gamedata.find_install_dir(self.install)
+
+    def launch_state(self):
+        L = launcher
+        st = {"config": str(L.config_path()), "found": L.config_path().is_file(), "running": L.battlenet_running(),
+              "battlenet": str(L.battlenet_exe() or ""), "mods": L.list_mods(self._install_dir()),
+              "install": str(self._install_dir() or ""), "flags": L.FLAGS, "value_flags": L.VALUE_FLAGS,
+              "current": None, "parsed": None, "error": None, "backups": []}
+        try:
+            st["current"] = L.read_args()
+            st["parsed"] = L.parse_args(st["current"])
+        except (L.LaunchError, ValueError) as e:
+            st["error"] = str(e)
+        if self.backup_dir.is_dir():
+            st["backups"] = [p.name for p in sorted(self.backup_dir.glob("Battle.net.config-*.bak"), reverse=True)]
+        return st
+
+    def launch_preview(self, body):
+        args = launcher.build_args(body.get("flags") or [], body.get("seed"), body.get("mod"), body.get("other") or "")
+        return {"args": args, "problems": launcher.parse_args(args)["problems"]}
+
+    def launch_save(self, body):
+        args = body.get("args")
+        if args is None:
+            args = self.launch_preview(body)["args"]
+        backup = launcher.write_args(args, self.backup_dir)
+        return {"saved": args, "backup": str(backup), **self.launch_state()}
+
+    def launch_restore(self, name):
+        p = (self.backup_dir / name).resolve()
+        if p.parent != self.backup_dir.resolve() or not p.name.startswith("Battle.net.config-") or not p.is_file():
+            raise launcher.LaunchError("Unknown backup")
+        args = launcher.read_args(p)
+        backup = launcher.write_args(args, self.backup_dir)
+        return {"saved": args, "backup": str(backup), **self.launch_state()}
+
+    def seeds_state(self):
+        try:
+            current = launcher.parse_args(launcher.read_args())["seed"]
+        except (launcher.LaunchError, ValueError, OSError):
+            current = None
+        return {"seeds": self.seed_book.seeds, "purposes": self.seed_book.purposes(), "in_use": current}
+
+    def seeds_save(self, body):
+        self.seed_book.save(body.get("seed"), body.get("name"), body.get("purpose"), body.get("notes"),
+                            body.get("id") or None)
+        return self.seeds_state()
+
+    def seeds_delete(self, seed_id):
+        self.seed_book.delete(seed_id)
+        return self.seeds_state()
+
+    def seeds_use(self, seed_id):
+        entry = self.seed_book.mark_used(seed_id)
+        return {"seed": entry["seed"], **self.seeds_state()}
+
+    def launch_game(self):
+        launcher.launch_d2r()
+        return {"launched": True}
 
     # ---------- session tracker
     def _describe_found(self, it):

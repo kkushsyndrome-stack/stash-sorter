@@ -232,6 +232,37 @@ def cmd_tz(args):
         print(f"{start}  {s['zone'][:70]:70s} immunities: {imm}")
 
 
+def cmd_launch_args(args):
+    from . import launcher as L
+    try:
+        current = L.read_args()
+    except L.LaunchError as e:
+        print(e)
+        sys.exit(1)
+    print(f"Battle.net settings: {L.config_path()}")
+    print(f"Current D2R launch arguments: {current or '(none)'}")
+    for prob in L.parse_args(current)["problems"]:
+        print(f"  ! {prob}")
+    if args.set is not None:
+        s = _session(args)
+        try:
+            backup = L.write_args(args.set, s.backup_dir)
+        except L.LaunchError as e:
+            print(f"Nothing was saved: {e}")
+            sys.exit(2)
+        print(f"Saved: {args.set}\nBackup of the previous settings: {backup}")
+
+
+def cmd_launch(args):
+    from . import launcher as L
+    try:
+        L.launch_d2r()
+    except L.LaunchError as e:
+        print(e)
+        sys.exit(1)
+    print("Starting Diablo II: Resurrected through Battle.net...")
+
+
 def cmd_set_clock(args):
     """Elevated helper started by the Terror Zones tab (Windows asks for permission first)."""
     from .clock import helper_main
@@ -352,6 +383,10 @@ def main(argv=None):
     p = sub.add_parser("tz", help="current and upcoming terror zones (offline schedule)")
     p.add_argument("--count", type=int, default=8)
     p.set_defaults(func=cmd_tz)
+    p = sub.add_parser("launch-args", help="show (or --set) D2R's launch arguments in Battle.net")
+    p.add_argument("--set", help='new arguments, e.g. "-direct -txt -seed 12345" (Battle.net must be closed)')
+    p.set_defaults(func=cmd_launch_args)
+    sub.add_parser("launch", help="start D2R through Battle.net").set_defaults(func=cmd_launch)
     p = sub.add_parser("set-clock", help="(used by the Terror Zones tab; needs administrator rights)")
     p.add_argument("when", help="local time YYYY-MM-DDTHH:MM:SS, or 'real'")
     p.add_argument("real_epoch", nargs="?")

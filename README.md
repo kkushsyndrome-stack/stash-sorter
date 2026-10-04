@@ -36,6 +36,13 @@ boss packs and super uniques, what's coming up, and pins your favourite zones. S
 [d2emu.com](https://d2emu.com/tz-sp), cached for offline use. (This was the stand-alone D2R Terror Zone Clock;
 its favourites and saved schedule are picked up automatically.)
 
+**Launch options:** change the command line arguments Battle.net passes to D2R (Battle.net → Game Settings →
+Additional command line arguments) from tick boxes: `-direct -txt` (play from extracted files), `-enablerespec`,
+`-resetofflinemaps`, a fixed `-seed` (with a random-seed button), `-mod` (lists your installed mods), plus anything
+else. Typos like a missing dash or a non-number seed are pointed out. Saving needs Battle.net to be closed (it
+overwrites the file when it exits); only D2R's arguments change, and the previous settings are kept so you can
+put them back. *Launch D2R* starts the game through Battle.net.
+
 **Look around:**
 - The game's own **item artwork** and **tooltips** ("+20% Faster Cast Rate", "Level 10 Life Tap (12/15 Charges)").
 - **Find**: search every character and stash by name, stat or location ("shako", "faster cast", "CharmMule").
@@ -99,6 +106,7 @@ download this folder, and double-click **`Stash Sorter.bat`** — or run `python
    New to it? Set *Test run* to "Just 1 item" first.
 4. **Session** — start a session before you play; every Save & Exit shows up as a run.
    **Terror Zones** — pick a zone, set the clock, revert when you're done.
+   **Launch** — D2R's Battle.net launch arguments (-direct -txt, -seed, -mod …) and a Launch button.
 5. **Find**, **Collection**, **Item Levels** — browse and search.
 6. **Clean Up** — delete duplicate uniques/sets you don't need, and empty mules.
 7. **Sorting Rules** — change how items are categorised and what mules are called.
@@ -115,6 +123,8 @@ python -m stash_sorter plan --mode migrate                   # old stash -> RotW
 python -m stash_sorter find harlequin                        # where is my Shako?
 python -m stash_sorter track                                 # session tracker in the terminal (Ctrl+C ends)
 python -m stash_sorter tz                                    # current and upcoming terror zones
+python -m stash_sorter launch-args [--set "-direct -txt"]    # show / change D2R's launch arguments
+python -m stash_sorter launch                                # start D2R through Battle.net
 python -m stash_sorter dupes                                 # duplicate uniques/sets (with item keys)
 python -m stash_sorter delete-items KEY [KEY ...]            # delete chosen copies (asks first)
 python -m stash_sorter empty-mules                           # which mules are empty
