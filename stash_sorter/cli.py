@@ -99,6 +99,18 @@ def cmd_apply(args):
     _confirm_and_apply(s, p, args.yes)
 
 
+def _plan_and_apply(args, make):
+    """Clean-up commands: make a plan (`make(session)`), show it, and apply it once confirmed."""
+    s = _session(args)
+    try:
+        p = make(s)
+    except ValueError as e:
+        print(f"Nothing was changed: {e}")
+        sys.exit(2)
+    _print_plan(p)
+    _confirm_and_apply(s, p, args.yes)
+
+
 def _confirm_and_apply(s, p, yes):
     if not (p["moves"] or p["merges"] or p["renames"] or p["new_mules"] or p["deletions"] or p["delete_chars"]):
         print("\nNothing to do.")
@@ -156,14 +168,7 @@ def cmd_dupes(args):
 
 
 def cmd_delete_items(args):
-    s = _session(args)
-    try:
-        p = s.plan_delete_items(args.keys)
-    except (ValueError, KeyError) as e:
-        print(f"Nothing was changed: {e}")
-        sys.exit(2)
-    _print_plan(p)
-    _confirm_and_apply(s, p, args.yes)
+    _plan_and_apply(args, lambda s: s.plan_delete_items(args.keys))
 
 
 def cmd_empty_mules(args):
@@ -174,25 +179,11 @@ def cmd_empty_mules(args):
 
 
 def cmd_delete_mules(args):
-    s = _session(args)
-    try:
-        p = s.plan_delete_mules(args.names)
-    except ValueError as e:
-        print(f"Nothing was changed: {e}")
-        sys.exit(2)
-    _print_plan(p)
-    _confirm_and_apply(s, p, args.yes)
+    _plan_and_apply(args, lambda s: s.plan_delete_mules(args.names))
 
 
 def cmd_rename(args):
-    s = _session(args)
-    try:
-        p = s.plan_rename_char(args.name, args.new_name)
-    except ValueError as e:
-        print(f"Nothing was changed: {e}")
-        sys.exit(2)
-    _print_plan(p)
-    _confirm_and_apply(s, p, args.yes)
+    _plan_and_apply(args, lambda s: s.plan_rename_char(args.name, args.new_name))
 
 
 def _fmt_seconds(n):

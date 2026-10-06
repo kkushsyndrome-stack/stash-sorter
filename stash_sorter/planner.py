@@ -14,11 +14,11 @@ Every mode except migrate can also empty the personal stash of characters you pl
 Plus clean-up plans: deleting chosen items (e.g. duplicates), deleting empty mules, and renaming a character.
 """
 
-import copy
+import hashlib
 from dataclasses import dataclass, field
 
 from . import catalog as C
-from .items import MODE_STORED, PAGE_STASH, PAGE_INVENTORY, PAGE_CUBE
+from .items import MODE_STORED, PAGE_STASH, PAGE_INVENTORY, PAGE_CUBE, identity
 from .rules import Ruleset
 from .savefiles import TAB_NORMAL, TAB_STACKABLES, valid_character_name, empty_status
 from .world import mule_status
@@ -291,8 +291,13 @@ class _Container:
                 i += 1
 
 
-def item_key(file_name, container, index):
-    return f"{file_name}|{container}|{index}"
+def item_key(file_name, container, it):
+    """Names one item: its file, tab ("tab3") or place on a character, grid spot, and a fingerprint of the item.
+    It keeps pointing at the same item while other items come and go (a list index would shift), so a flag
+    like "keep in the stash" survives sorting; moving the item itself in game changes it."""
+    if container == "items":
+        container = f"c{it.mode}.{it.page}.{it.equipped}"
+    return f"{file_name}|{container}|{it.x},{it.y}|{hashlib.blake2b(identity(it), digest_size=5).hexdigest()}"
 
 
 def is_mule_candidate(ch, opts):
@@ -337,8 +342,8 @@ class _Planner:
         for ti, tab in enumerate(stash.tabs):
             if tab.type != TAB_NORMAL:
                 continue
-            for idx, it in enumerate(tab.items):
-                key = item_key(stash.path.name, f"tab{ti}", idx)
+            for it in tab.items:
+                key = item_key(stash.path.name, f"tab{ti}", it)
                 if key in self.keep_items or self.rules.categorize(it) in self.opts.keep_in_stash:
                     continue
                 label = "stash" if stash is self.stash else stash.path.stem
@@ -362,12 +367,14 @@ class _Planner:
                 self.plan.notes.append(f"{ch.name}'s stash stays put: {reason}.")
                 continue
             n = 0
-            for idx, it in enumerate(ch.items):
+            for it in ch.items:
                 if it.mode != MODE_STORED or it.page != PAGE_STASH or it.code == "box":
                     continue
                 base = self.gd.items.get(it.code)
-                key = item_key(ch.path.name, "items", idx)
-                if (base is not None and base.quest) or key in self.keep_items                         or self.rules.categorize(it) in self.opts.keep_in_stash:
+                key = item_key(ch.path.name, "items", it)
+                if base is not None and base.quest:
+                    continue
+                if key in self.keep_items or self.rules.categorize(it) in self.opts.keep_in_stash:
                     continue
                 self.origin_spot[id(it)] = (ch.path.name, it.page, it.x, it.y)
                 self._pool_add(it, key, ch.path.name, f"{ch.name} stash ({it.x},{it.y})")
@@ -397,9 +404,9 @@ class _Planner:
     def load_mule_contents(self, pool_mode):
         """pool_mode: None keeps every mule item in place; 'all' pools every stored item for re-sorting."""
         for m in self.containers:
-            for idx, it in enumerate(m.ch.items):
+            for it in m.ch.items:
                 stored_on_grid = it.mode == MODE_STORED and it.page in m.grids
-                key = item_key(m.file, "items", idx)
+                key = item_key(m.file, "items", it)
                 cat = self.rules.categorize(it)
                 if stored_on_grid:
                     m.items_before += 1
@@ -589,10 +596,10 @@ class _Planner:
         for m in self.containers:
             if m.category is None:
                 continue
-            for idx, it in enumerate(m.ch.items):
+            for it in m.ch.items:
                 if id(it) not in m.held or m.held[id(it)][5]:
                     continue
-                key = item_key(m.file, "items", idx)
+                key = item_key(m.file, "items", it)
                 cat = m.held[id(it)][4]
                 if self._misplaced(m, cat):
                     misplaced.append(PoolItem(it, key, m.file, f"{m.name} {PAGE_LABEL[it.page]} ({it.x},{it.y})",
@@ -659,8 +666,7 @@ class _Planner:
             if prev:
                 src_file, src_where, key = prev.src_file, prev.src_where, prev.key
             else:
-                idx = next(i for i, x in enumerate(victim.ch.items) if x is it)
-                src_file, key = victim.file, item_key(victim.file, "items", idx)
+                src_file, key = victim.file, item_key(victim.file, "items", it)
                 src_where = f"{victim.name} {PAGE_LABEL[it.page]} ({it.x},{it.y})"
             self._record_move(it, key, C.display_name(it, self.gd, self.names), cat, src_file, src_where, m, spot)
         victim.category = None
@@ -777,22 +783,24 @@ def make_plan(world, opts: Options):
 # ---------------------------------------------------------------------------------------------- clean-up plans
 def find_item(world, key):
     """(item, owner, where, deletable reason) for an item key, or raises KeyError."""
-    file_name, container, idx = key.split("|")
-    idx = int(idx)
+    file_name = key.split("|", 1)[0]
     for ch in world.characters:
-        if ch.path.name == file_name and container == "items":
-            it = ch.items[idx]
-            where = f"{ch.name} {PAGE_LABEL.get(it.page, 'equipped') if it.mode == MODE_STORED else 'equipped/belt'}"
-            ok = it.mode == MODE_STORED and it.page in DEFAULT_GRIDS
-            return it, ch, where, "" if ok else "equipped or in the belt - take it off in game first"
+        if ch.path.name != file_name:
+            continue
+        for it in ch.items:
+            if item_key(file_name, "items", it) == key:
+                where = f"{ch.name} {PAGE_LABEL.get(it.page, 'equipped') if it.mode == MODE_STORED else 'equipped/belt'}"
+                ok = it.mode == MODE_STORED and it.page in DEFAULT_GRIDS
+                return it, ch, where, "" if ok else "equipped or in the belt - take it off in game first"
     for st in world.stashes:
-        if st.path.name == file_name and container.startswith("tab"):
-            ti = int(container[3:])
-            tab = st.tabs[ti]
-            if tab.type != TAB_NORMAL:
-                raise KeyError(key)
-            return tab.items[idx], st, f"{st.path.stem} tab {ti + 1}", ""
-    raise KeyError(key)
+        if st.path.name != file_name:
+            continue
+        for ti, tab in enumerate(st.tabs):
+            if tab.type == TAB_NORMAL:
+                for it in tab.items:
+                    if item_key(file_name, f"tab{ti}", it) == key:
+                        return it, st, f"{st.path.stem} tab {ti + 1}", ""
+    raise KeyError(f"{key} (moved or changed since it was picked? reload and pick it again)")
 
 
 def plan_item_deletions(world, keys, stash_file=None):
@@ -800,7 +808,10 @@ def plan_item_deletions(world, keys, stash_file=None):
     stash = world.stash(stash_file) if stash_file else world.default_stash()
     plan = Plan(options=Options(mode="delete-items"), stash_file=stash.path.name if stash else "")
     for key in dict.fromkeys(keys):
-        it, owner, where, problem = find_item(world, key)
+        try:
+            it, owner, where, problem = find_item(world, key)
+        except KeyError as e:
+            raise ValueError(f"item not found: {e.args[0]}") from None
         if problem:
             raise ValueError(f"{C.display_name(it, world.gd, world.names)}: {problem}")
         plan.deletions.append(Deletion(key, C.display_name(it, world.gd, world.names), owner.path.name, where, item=it))

@@ -219,6 +219,25 @@ class Sandbox(unittest.TestCase):
             if p.suffix != ".d2s":
                 (self.saves / f"{name}{p.suffix}").write_bytes(p.read_bytes())
 
+    def test_kept_item_stays_kept_after_other_items_leave(self):
+        # 0.7.0 named items by list position, so after a test run the flag pointed at nothing (or another item)
+        w = W.load_world(self.saves, GD)
+        st = w.stash("SharedStashSoftCoreV2.d2i")
+        mules = [c.name for c in w.characters if c.era == st.era and c.version == st.tabs[0].version]
+        base = dict(mode="stash", stash_file=st.path.name, mules=mules)
+        movable = {m.key for m in planner.make_plan(w, planner.Options(**base)).moves}
+        kept = [planner.item_key(st.path.name, "tab0", it) for it in st.tabs[0].items]
+        kept = [k for k in kept if k in movable][-1]  # the last one, so earlier ones leaving would shift it
+        plan = planner.make_plan(w, planner.Options(**base, keep_items=[kept], limit=5))
+        self.assertTrue(plan.moves)
+        A.apply_plan(w, plan, self.backups, log=lambda m: None, skip_game_check=True)
+        w2 = W.load_world(self.saves, GD)
+        it, owner, _, _ = planner.find_item(w2, kept)
+        self.assertEqual(owner.path.name, st.path.name)
+        again = planner.make_plan(w2, planner.Options(**base, keep_items=[kept]))
+        self.assertTrue(again.moves)
+        self.assertFalse(any(m.key == kept for m in again.moves))
+
     def test_personal_stash_goes_to_mules(self):
         w = W.load_world(self.saves, GD)
         sorc = w.character("Sorceress")

@@ -3,6 +3,7 @@
 import datetime as dt
 import json
 from pathlib import Path
+from typing import NamedTuple
 
 from . import catalog as C
 from . import gamedata, planner, paths, apply as applier
@@ -17,6 +18,26 @@ from .savefiles import TAB_NORMAL, TAB_STACKABLES, empty_status
 from .world import find_save_dir, load_world, mule_status
 
 GRID_PAGES = (PAGE_INVENTORY, PAGE_STASH, PAGE_CUBE)
+
+
+class Found(NamedTuple):
+    """One item somewhere in the saves, as `Session.walk` reports it."""
+    item: object
+    owner: str  # character name, or "Shared stash (RotW)"
+    place: str  # "stash", "inventory", "equipped"... on a character; "tab 2" or "Stackables tab" in a stash
+    key: str    # planner.item_key (None for a Stackables-tab stack)
+    kind: str   # "char", "tab" or "stack"
+    file: str
+
+    @property
+    def where(self):
+        return f"{self.owner} - {self.place}"
+
+    @property
+    def on_grid(self):
+        """Stored in a stash, inventory or cube (not equipped, in the belt or a stack): can be moved or deleted."""
+        return self.kind == "tab" or (self.kind == "char" and self.item.mode == MODE_STORED
+                                      and self.item.page in GRID_PAGES)
 
 
 class Session:
@@ -101,10 +122,10 @@ class Session:
         rs = self.ruleset()
         chars = []
         for c in w.characters:
-            ok, reason = mule_status(c, stash, 99) if stash else (False, "no stash")
-            candidate = planner.is_mule_candidate(c, planner.Options())
-            if ok and not candidate:
-                ok, reason = False, f"level {c.level}"
+            usable, reason = mule_status(c, stash, 99) if stash else (False, "no stash")
+            ok = usable and planner.is_mule_candidate(c, planner.Options())
+            if usable and not ok:
+                reason = f"level {c.level}"
             stored = [i for i in c.items if i.mode == MODE_STORED and i.page in GRID_PAGES]
             cats = [rs.categorize(i) for i in stored]
             top = max(set(cats), key=cats.count) if cats else ""
@@ -114,7 +135,7 @@ class Session:
                 "cells": sum(C.item_size(i, self.gd)[0] * C.item_size(i, self.gd)[1] for i in stored),
                 "mule_ok": ok, "reason": reason, "top_category": top, "gold": c.gold,
                 "top_share": round(cats.count(top) / len(cats), 2) if cats else 0,
-                "blocked": not mule_status(c, stash, 99)[0] if stash else True,
+                "blocked": not usable,
             })
         return {
             "clock_shift": int(self.clock.offset.total_seconds()) if self.clock.shifted else 0,
@@ -132,14 +153,24 @@ class Session:
             "max_level": self.max_char_level(), "crafter_level": self.crafter_level,
         }
 
+    def mule_defaults(self, level=1, hint=True):
+        """{character name: counts as a mule by default} for the GUI's starting roles."""
+        stash = self.world.default_stash()
+        opts = planner.Options(mule_max_level=level, mule_name_hint=hint)
+        return {c.name: bool(stash) and mule_status(c, stash, 99)[0] and planner.is_mule_candidate(c, opts)
+                for c in self.world.characters}
+
     def stash_json(self, file_name=None, crafter=None):
         s = self.world.stash(file_name) if file_name else self.world.default_stash()
         rs = self.ruleset(crafter)
         tabs = []
         for ti, t in enumerate(s.tabs):
             if t.type == TAB_NORMAL:
-                items = [self.item_json(it, f"tab {ti + 1}", planner.item_key(s.path.name, f"tab{ti}", i), rs=rs)
-                         for i, it in enumerate(t.items)]
+                items = []
+                for i, it in enumerate(t.items):
+                    j = self.item_json(it, f"tab {ti + 1}", planner.item_key(s.path.name, f"tab{ti}", it), rs=rs)
+                    j["legacy_key"] = f"{s.path.name}|tab{ti}|{i}"  # how 0.7.0 and older named it (keep flags)
+                    items.append(j)
             elif t.type == TAB_STACKABLES:
                 items = [{"code": it.code, "name": C.display_name(it, self.gd, self.world.names),
                           "count": it.stack_count or 0, "category": rs.categorize(it),
@@ -154,58 +185,59 @@ class Session:
         c = self.world.character(name)
         rs = self.ruleset(crafter)
         items = []
-        for i, it in enumerate(c.items):
-            items.append(self.item_json(it, _where(it), planner.item_key(c.path.name, "items", i), rs=rs))
+        for it in c.items:
+            items.append(self.item_json(it, _where(it), planner.item_key(c.path.name, "items", it), rs=rs))
         return {"name": c.name, "class": c.class_name, "level": c.level, "items": items, "gold": c.gold,
                 "has_cube": any(i.code == "box" for i in c.items)}
+
+    def walk(self, stacks=False):
+        """Every top-level item in every save, as `Found` (Stackables-tab stacks only when `stacks`)."""
+        for c in self.world.characters:
+            for it in c.items:
+                yield Found(it, c.name, _where(it), planner.item_key(c.path.name, "items", it), "char", c.path.name)
+        for s in self.world.stashes:
+            owner = _stash_label(s)
+            for ti, t in enumerate(s.tabs):
+                if t.type == TAB_NORMAL:
+                    for it in t.items:
+                        yield Found(it, owner, f"tab {ti + 1}", planner.item_key(s.path.name, f"tab{ti}", it), "tab",
+                                    s.path.name)
+                elif t.type == TAB_STACKABLES and stacks:
+                    for it in t.items:
+                        if it.stack_count:
+                            yield Found(it, owner, "Stackables tab", None, "stack", s.path.name)
 
     def all_items(self, crafter=None):
         """Every item in every save (for search / collection)."""
         rs = self.ruleset(crafter)
         out = []
-        for c in self.world.characters:
-            for i, it in enumerate(c.items):
-                j = self.item_json(it, f"{c.name} - {_where(it)}", planner.item_key(c.path.name, "items", i), rs=rs)
-                j["owner"], j["place"] = c.name, _where(it)
-                out.append(j)
-        for s in self.world.stashes:
-            owner = _stash_label(s)
-            for ti, t in enumerate(s.tabs):
-                if t.type == TAB_NORMAL:
-                    for i, it in enumerate(t.items):
-                        j = self.item_json(it, f"{s.path.stem} tab {ti + 1}",
-                                           planner.item_key(s.path.name, f"tab{ti}", i), rs=rs)
-                        j["owner"], j["place"], j["stash_tab"] = owner, f"tab {ti + 1}", True
-                        out.append(j)
-                elif t.type == TAB_STACKABLES:
-                    for it in t.items:
-                        if it.stack_count:
-                            j = self.item_json(it, f"{s.path.stem} Stackables", rs=rs)
-                            j["count"] = it.stack_count
-                            j["owner"], j["place"] = owner, "Stackables tab"
-                            out.append(j)
+        for f in self.walk(stacks=True):
+            j = self.item_json(f.item, f.where, f.key, rs=rs)
+            j.update(owner=f.owner, place=f.place, stash_tab=f.kind == "tab")
+            if f.kind == "stack":
+                j["count"] = f.item.stack_count
+            out.append(j)
         return out
 
     def assess_rows(self, crafter, scope="stash"):
         rs = self.ruleset(crafter)
-        s = self.world.default_stash()
-        sources = []
-        for ti, t in enumerate(s.tabs):
-            if t.type == TAB_NORMAL:
-                sources += [(it, f"Shared stash tab {ti + 1}", planner.item_key(s.path.name, f"tab{ti}", i))
-                            for i, it in enumerate(t.items)]
-        if scope == "all":
-            for c in self.world.characters:
-                sources += [(it, c.name, planner.item_key(c.path.name, "items", i))
-                            for i, it in enumerate(c.items) if it.mode == MODE_STORED]
-        return [j for j in (self.item_json(it, where, key, rs=rs) for it, where, key in sources) if j["assess"]]
+        stash = self.world.default_stash()
+        rows = []
+        for f in self.walk():
+            in_stash = f.kind == "tab" and f.file == stash.path.name
+            on_char = scope == "all" and f.kind == "char" and f.item.mode == MODE_STORED
+            if in_stash or on_char:
+                j = self.item_json(f.item, f.where, f.key, rs=rs)
+                if j["assess"]:
+                    rows.append(j)
+        return rows
 
     def collection(self):
         """Holy grail: every unique and set item, and where you have it."""
         gd = self.gd
         owned_u, owned_s = {}, {}
         rw_made = {}
-        for j, it in self._iter_items():
+        for j, it in ((f.where, f.item) for f in self.walk()):
             if it.unique_id is not None:
                 owned_u.setdefault(it.unique_id, []).append(j)
             if it.set_id is not None:
@@ -235,16 +267,6 @@ class Session:
         runewords = [{"name": n, "found": rw_made.get(n, [])} for n in sorted({n for n, _ in
                      self.world.names.runewords if n})]
         return {"uniques": uniques, "sets": sets, "runewords": runewords}
-
-    def _iter_items(self):
-        for c in self.world.characters:
-            for it in c.items:
-                yield f"{c.name} - {_where(it)}", it
-        for s in self.world.stashes:
-            for ti, t in enumerate(s.tabs):
-                if t.type == TAB_NORMAL:
-                    for it in t.items:
-                        yield f"{s.path.stem} tab {ti + 1}", it
 
     # ---------- rules
     def rules_json(self):
@@ -544,18 +566,10 @@ class Session:
     # ---------- clean-up: duplicates and empty mules
     def duplicates(self):
         """Unique and set items you have more than once (top-level items only; socketed ones can't be deleted)."""
-        gd, rs = self.gd, self.ruleset()
+        rs = self.ruleset()
         groups = {}
-        for c in self.world.characters:
-            for i, it in enumerate(c.items):
-                self._dup_add(groups, it, f"{c.name} - {_where(it)}", planner.item_key(c.path.name, "items", i),
-                              it.mode == MODE_STORED and it.page in GRID_PAGES, rs)
-        for s in self.world.stashes:
-            for ti, t in enumerate(s.tabs):
-                if t.type == TAB_NORMAL:
-                    for i, it in enumerate(t.items):
-                        self._dup_add(groups, it, f"{s.path.stem} tab {ti + 1}",
-                                      planner.item_key(s.path.name, f"tab{ti}", i), True, rs)
+        for f in self.walk():
+            self._dup_add(groups, f.item, f.where, f.key, f.on_grid, rs)
         out = []
         for (kind, _), copies in groups.items():
             if len(copies) > 1:

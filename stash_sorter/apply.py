@@ -22,8 +22,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import catalog as C
-from .bits import set_bits
-from .items import MODE_STORED, POS_MODE, POS_EQUIPPED, POS_X, POS_Y, POS_PAGE, PAGE_STASH
+from .items import MODE_STORED, PAGE_STASH, identity as _identity
 from .planner import DEFAULT_GRIDS, STASH_TAB_GRID, STACK_MAX
 from .savefiles import parse_character, parse_stash, valid_character_name, empty_status, TAB_STACKABLES, TAB_NORMAL
 
@@ -176,14 +175,6 @@ def recover(backup_root, log=print):
 
 
 # ---------------------------------------------------------------------------------------------- building
-def _identity(it):
-    """An item's bytes with location bits cleared: must be identical before and after a move."""
-    raw = bytearray(it.raw)
-    for pos, n in ((POS_MODE, 3), (POS_EQUIPPED, 4), (POS_X, 4), (POS_Y, 4), (POS_PAGE, 3)):
-        set_bits(raw, pos, n, 0)
-    return bytes(raw) + b"".join(c.to_bytes() for c in it.children)
-
-
 def _clone(it):
     c = copy.copy(it)
     c.raw = bytearray(it.raw)

@@ -32,11 +32,11 @@
     <div class="grid-cards" id="ovCards"></div>
     <div class="card">
       <h2>Characters</h2>
-      <p class="muted small">Ticked characters are used as mules: by default every level-1 character, plus any with "mule" in the name, that can use the selected stash. Click a row to look inside.</p>
+      <p class="muted small">Each character's <b>role</b>: <b>Mule</b> characters receive sorted loot (by default every level-1 character, plus any with "mule" in the name, that can use the selected stash). For characters you play, <b>Empty stash</b> has Sort &amp; Distribute move their personal stash onto the mules too (never their inventory, cube or gear). <b>Leave alone</b> is never touched. Click a row to look inside.</p>
       <div class="row" style="margin-bottom:8px">
         <div class="field"><label>Mule = level at or below</label><input type="number" id="muleLevel" min="1" max="99" value="1"></div>
         <label class="check"><input type="checkbox" id="muleHint" checked> …or "mule" in the name</label>
-        <button class="btn" id="resetMules">Reset selection</button>
+        <button class="btn" id="resetMules">Reset mules</button>
       </div>
       <div class="table-wrap"><table id="charTable"></table></div>
     </div>
@@ -60,16 +60,15 @@
     <div class="card">
       <h2>Sort &amp; distribute</h2>
       <div class="modes" id="modes">
-        <label class="mode"><input type="radio" name="mode" value="stash" checked><b>Empty the shared stash</b><span>Move stash items onto mules that already hold that kind of loot.</span></label>
-        <label class="mode"><input type="radio" name="mode" value="tidy"><b>Tidy up</b><span>Empty the stash, move items sitting on the wrong mule, and pack each kind of loot onto as few mules as possible (freeing whole mules).</span></label>
+        <label class="mode"><input type="radio" name="mode" value="stash" checked><b>Empty the shared stash</b><span>Move stash items onto mules that already hold that kind of loot. Quickest: only the stash items move.</span></label>
+        <label class="mode"><input type="radio" name="mode" value="tidy"><b>Tidy up</b><span>Everything <i>Empty the shared stash</i> does, plus: move items sitting on the wrong mule, and pack each kind of loot onto as few mules as possible (freeing whole mules).</span></label>
         <label class="mode"><input type="radio" name="mode" value="reorganize"><b>Full re-sort</b><span>Lay out the stash and every mule again, category by category. Changes many files.</span></label>
         <label class="mode"><input type="radio" name="mode" value="migrate"><b>Bring the old stash forward</b><span>Move your Resurrected-era shared stash into the RotW one (as a character transfer would). Gold stays put.</span></label>
       </div>
       <div class="row" style="margin-top:12px">
         <div class="field"><label>Rename mules</label>
           <select id="rename"><option value="new">Only mules that get a new job</option><option value="all">All mules, by category</option><option value="none">Don't rename</option></select></div>
-        <div class="field" id="fromField"><label>Also empty the personal stash of</label>
-          <details class="keepbox"><summary id="fromSummary">Nobody — mules and the shared stash only</summary><div id="fromChars"></div></details></div>
+        <div class="field" id="fromField"><label>Also empty the personal stash of</label><div class="small" id="fromSummary" style="max-width:260px"></div></div>
         <div class="field"><label>Keep these in the stash</label>
           <details class="keepbox"><summary id="keepSummary">Nothing — move everything</summary><div id="keepCats"></div></details></div>
         <div class="field"><label>Test run</label>
@@ -248,6 +247,7 @@
       <h2>Backups</h2>
       <p class="muted small">A full copy of your save folder is zipped before every change. <b>Undo</b> reverses just that one change (only possible while the files it touched are unchanged); <b>Restore</b> puts the whole folder back as it was. Both back up the current state first.</p>
       <p class="small">Backup folder: <span class="mono" id="backupDir"></span></p>
+      <div class="row" style="margin-bottom:10px"><button class="btn" id="backupNow">Back up now</button><span class="small muted" id="backupNowMsg">Zips your whole save folder.</span></div>
       <div class="table-wrap"><table id="backupTable"></table></div>
     </div>
   </section>

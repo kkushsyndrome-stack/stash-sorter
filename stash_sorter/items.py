@@ -38,6 +38,14 @@ POS_Y = 46          # 4 bits
 POS_PAGE = 50       # 3 bits
 
 MODE_STORED, MODE_EQUIPPED, MODE_BELT, MODE_GROUND, MODE_CURSOR, MODE_DROPPING, MODE_SOCKETED = range(7)
+
+
+def identity(it):
+    """An item's bytes with location bits cleared: must be identical before and after a move."""
+    raw = bytearray(it.raw)
+    for pos, n in ((POS_MODE, 3), (POS_EQUIPPED, 4), (POS_X, 4), (POS_Y, 4), (POS_PAGE, 3)):
+        set_bits(raw, pos, n, 0)
+    return bytes(raw) + b"".join(c.to_bytes() for c in it.children)
 # page field as stored in the file
 PAGE_NONE, PAGE_INVENTORY, PAGE_CUBE, PAGE_STASH = 0, 1, 4, 5
 

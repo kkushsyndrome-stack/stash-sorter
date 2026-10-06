@@ -95,6 +95,8 @@ def serve(session, port=0, open_browser=True):
                         "/api/seedrun": lambda: session.seedrun_state(),
                         "/api/session/load": lambda: session.session_load(q.get("id", "")),
                         "/api/backups": lambda: session.backups(),
+                        "/api/mule_defaults": lambda: session.mule_defaults(int(q.get("level") or 1),
+                                                                            q.get("hint", "1") == "1"),
                     }
                     if path in routes:
                         return self._send(200, routes[path]())
@@ -111,70 +113,52 @@ def serve(session, port=0, open_browser=True):
             path = urlparse(self.path).path
             try:
                 with lock:
-                    if path == "/api/reload":
-                        session.reload()
-                        return self._send(200, {"ok": True})
-                    if path == "/api/plan":
-                        return self._send(200, session.make_plan(body))
-                    if path == "/api/seeds/save":
-                        return self._send(200, session.seeds_save(body))
-                    if path == "/api/seeds/delete":
-                        return self._send(200, session.seeds_delete(body.get("id", "")))
-                    if path == "/api/seedrun/start":
-                        return self._send(200, session.seedrun_start(body))
-                    if path == "/api/seedrun/again":
-                        return self._send(200, session.seedrun_again())
-                    if path == "/api/seedrun/cancel":
-                        return self._send(200, session.seedrun_cancel())
-                    if path == "/api/seedrun/dismiss":
-                        return self._send(200, session.seedrun_dismiss())
-                    if path == "/api/launch/preview":
-                        return self._send(200, session.launch_preview(body))
-                    if path == "/api/launch/save":
-                        return self._send(200, session.launch_save(body))
-                    if path == "/api/launch/restore":
-                        return self._send(200, session.launch_restore(body.get("backup", "")))
-                    if path == "/api/launch/start":
-                        return self._send(200, session.launch_game())
-                    if path == "/api/tz/update":
-                        return self._send(200, session.tz_update(body))
-                    if path == "/api/tz/set":
-                        return self._send(200, session.tz_set(body.get("zone", "")))
-                    if path == "/api/tz/revert":
-                        return self._send(200, session.tz_revert())
-                    if path == "/api/tz/refresh":
-                        return self._send(200, session.tz_refresh())
-                    if path == "/api/backup_now":
-                        return self._send(200, session.backup_now())
-                    if path == "/api/session/start":
-                        return self._send(200, session.session_start())
-                    if path == "/api/session/end":
-                        return self._send(200, session.session_end())
-                    if path == "/api/session/delete":
-                        return self._send(200, session.session_delete(body.get("id", "")))
-                    if path == "/api/plan_delete_items":
-                        return self._send(200, session.plan_delete_items(body.get("keys") or []))
-                    if path == "/api/plan_delete_mules":
-                        return self._send(200, session.plan_delete_mules(body.get("names") or []))
-                    if path == "/api/plan_rename_char":
-                        return self._send(200, session.plan_rename_char(body.get("name", ""), body.get("new", "")))
-                    if path == "/api/apply":
+                    def apply():
                         logs = []
                         res = session.apply(int(body.get("plan_id", -1)), log=logs.append)
                         res["log_lines"] = logs
                         for k in ("moves", "stacked", "files_after", "written"):
                             res.pop(k, None)
-                        return self._send(200, res)
-                    if path == "/api/restore":
-                        return self._send(200, session.restore(body.get("file", "")))
-                    if path == "/api/undo":
-                        return self._send(200, session.undo(body.get("log", "")))
-                    if path == "/api/recover":
-                        return self._send(200, session.recover())
-                    if path == "/api/rules":
-                        return self._send(200, session.save_rules(body.get("rules")))
-                    if path == "/api/rules/reset":
-                        return self._send(200, session.reset_rules())
+                        return res
+
+                    def reload():
+                        session.reload()
+                        return {"ok": True}
+
+                    routes = {
+                        "/api/reload": reload,
+                        "/api/plan": lambda: session.make_plan(body),
+                        "/api/seeds/save": lambda: session.seeds_save(body),
+                        "/api/seeds/delete": lambda: session.seeds_delete(body.get("id", "")),
+                        "/api/seedrun/start": lambda: session.seedrun_start(body),
+                        "/api/seedrun/again": lambda: session.seedrun_again(),
+                        "/api/seedrun/cancel": lambda: session.seedrun_cancel(),
+                        "/api/seedrun/dismiss": lambda: session.seedrun_dismiss(),
+                        "/api/launch/preview": lambda: session.launch_preview(body),
+                        "/api/launch/save": lambda: session.launch_save(body),
+                        "/api/launch/restore": lambda: session.launch_restore(body.get("backup", "")),
+                        "/api/launch/start": lambda: session.launch_game(),
+                        "/api/tz/update": lambda: session.tz_update(body),
+                        "/api/tz/set": lambda: session.tz_set(body.get("zone", "")),
+                        "/api/tz/revert": lambda: session.tz_revert(),
+                        "/api/tz/refresh": lambda: session.tz_refresh(),
+                        "/api/backup_now": lambda: session.backup_now(),
+                        "/api/session/start": lambda: session.session_start(),
+                        "/api/session/end": lambda: session.session_end(),
+                        "/api/session/delete": lambda: session.session_delete(body.get("id", "")),
+                        "/api/plan_delete_items": lambda: session.plan_delete_items(body.get("keys") or []),
+                        "/api/plan_delete_mules": lambda: session.plan_delete_mules(body.get("names") or []),
+                        "/api/plan_rename_char": lambda: session.plan_rename_char(body.get("name", ""),
+                                                                                  body.get("new", "")),
+                        "/api/apply": apply,
+                        "/api/restore": lambda: session.restore(body.get("file", "")),
+                        "/api/undo": lambda: session.undo(body.get("log", "")),
+                        "/api/recover": lambda: session.recover(),
+                        "/api/rules": lambda: session.save_rules(body.get("rules")),
+                        "/api/rules/reset": lambda: session.reset_rules(),
+                    }
+                    if path in routes:
+                        return self._send(200, routes[path]())
             except (ApplyError, RulesError, ValueError, ClockError, LaunchError) as e:
                 return self._send(409, {"error": str(e)})
             except Exception as e:

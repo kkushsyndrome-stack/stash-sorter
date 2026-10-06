@@ -21,7 +21,7 @@ const GRID = { 5: [10, 10], 1: [10, 4], 4: [3, 4] };
 const QUALITIES = ["normal", "superior", "inferior", "magic", "rare", "crafted", "set", "unique", "runeword"];
 
 let S = null, stashData = null, curPlan = null, allItems = null, grail = null, rulesState = null;
-let kept = new Set(store.get("kept", [])), muleSel = null;
+let kept = new Set(store.get("kept", [])), roles = null;
 
 // ---------------------------------------------------------------- tooltip
 const tip = $("#tip");
@@ -88,16 +88,35 @@ function gridBox(caption, items, page, opts) {
 }
 
 // ---------------------------------------------------------------- overview
-function defaultMules() {
-  const lvl = +$("#muleLevel").value || 1, hint = $("#muleHint").checked;
-  const sel = {};
-  for (const c of S.characters) sel[c.name] = !c.blocked && (c.level <= lvl || (hint && c.name.toLowerCase().includes("mule")));
-  return sel;
+// each character's role: "mule" (receives sorted loot), "empty" (a character you play: Sort & Distribute
+// empties their personal stash onto the mules) or "leave" (never touched)
+const ROLE_LABEL = { mule: "Mule", empty: "Empty stash", leave: "Leave alone" };
+async function defaultRoles() {  // who counts as a mule is decided by the server (planner.is_mule_candidate)
+  const d = await api(`/api/mule_defaults?level=${+$("#muleLevel").value || 1}&hint=${$("#muleHint").checked ? 1 : 0}`);
+  return Object.fromEntries(S.characters.map(c => [c.name, d[c.name] ? "mule" : "leave"]));
 }
-const selectedMules = () => Object.entries(muleSel).filter(([, v]) => v).map(([k]) => k);
+async function loadRoles() {
+  let r = store.get("roles", null);
+  if (!r) {  // 0.7.0 and older kept two lists: mule ticks, and characters whose stash to empty
+    const mules = store.get("muleSel", null), from = new Set(store.get("fromChars", []));
+    if (mules) r = Object.fromEntries(Object.entries(mules).map(([n, m]) => [n, m ? "mule" : from.has(n) ? "empty" : "leave"]));
+  }
+  const def = await defaultRoles();
+  r = r || def;
+  for (const n of Object.keys(r)) if (!(n in def)) delete r[n];
+  for (const n of Object.keys(def)) if (!(n in r)) r[n] = def[n];
+  roles = r; store.set("roles", roles);
+}
+async function resetRoles() {  // mules back to the default rule; characters set to "Empty stash" keep that
+  const def = await defaultRoles();
+  for (const n of Object.keys(def)) roles[n] = def[n] === "mule" ? "mule" : roles[n] === "empty" ? "empty" : "leave";
+  store.set("roles", roles); renderOverview();
+}
+const withRole = role => S.characters.filter(c => !c.blocked && roles[c.name] === role).map(c => c.name);
+const selectedMules = () => withRole("mule");
 function renderOverview() {
   const st = S.stashes.find(s => s.file === $("#stashSel").value) || S.stashes.find(s => s.file === S.default_stash);
-  const mules = S.characters.filter(c => muleSel[c.name]);
+  const mules = S.characters.filter(c => !c.blocked && roles[c.name] === "mule");
   const gold = S.characters.reduce((a, c) => a + c.gold, 0) + S.stashes.reduce((a, s) => a + s.gold, 0);
   $("#ovCards").innerHTML = [
     ["Items in shared stash", st ? st.items : 0, st ? st.file : "no stash found"],
@@ -108,31 +127,21 @@ function renderOverview() {
   ].map(([l, v, sub]) => `<div class="stat"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="small muted">${esc(sub)}</div></div>`).join("") +
     `<div class="stat"><div class="l">Save folder</div><div class="mono small" style="margin-top:6px">${esc(S.save_dir)}</div></div>`;
   const rows = [...S.characters].sort((a, b) => (b.mule_ok - a.mule_ok) || a.name.localeCompare(b.name));
-  $("#charTable").innerHTML = `<tr><th>Mule</th><th>Name</th><th>Class</th><th>Lvl</th><th>Era</th><th>Items</th><th>Fill</th><th>Mostly</th><th>Gold</th><th>Notes</th></tr>` +
-    rows.map(c => `<tr class="click" data-n="${esc(c.name)}"><td><input type="checkbox" data-mule="${esc(c.name)}" ${muleSel[c.name] ? "checked" : ""} ${c.blocked ? "disabled" : ""}></td>
+  $("#charTable").innerHTML = `<tr><th>Role</th><th>Name</th><th>Class</th><th>Lvl</th><th>Era</th><th>Items</th><th>Fill</th><th>Mostly</th><th>Gold</th><th>Notes</th></tr>` +
+    rows.map(c => `<tr class="click" data-n="${esc(c.name)}"><td>${c.blocked ? '<span class="muted">—</span>' : `<select data-role="${esc(c.name)}">${Object.entries(ROLE_LABEL).map(([v, l]) => `<option value="${v}" ${roles[c.name] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`}</td>
       <td>${esc(c.name)}</td><td>${esc(c.class)}</td><td>${c.level}</td><td class="small">${esc({ "Reign of the Warlock": "RotW" }[c.era] || c.era)}</td><td>${c.items}</td>
       <td style="min-width:90px"><div class="bar"><i style="width:${Math.min(100, c.cells / 140 * 100)}%"></i></div><span class="small muted">${c.cells}/140</span></td>
       <td class="small">${c.top_category ? esc(S.categories[c.top_category] || c.top_category) + ` <span class="muted">${Math.round(c.top_share * 100)}%</span>` : '<span class="muted">empty</span>'}</td>
       <td class="small">${c.gold ? c.gold.toLocaleString() : ""}</td>
       <td class="small">${c.blocked ? `<span class="pill warn">${esc(c.reason)}</span>` : ""}</td></tr>`).join("");
-  $$("[data-mule]").forEach(cb => cb.addEventListener("click", e => {
-    e.stopPropagation(); muleSel[cb.dataset.mule] = cb.checked; store.set("muleSel", muleSel); renderOverview();
-  }));
+  $$("[data-role]").forEach(s => {
+    s.addEventListener("click", e => e.stopPropagation());
+    s.addEventListener("change", () => { roles[s.dataset.role] = s.value; store.set("roles", roles); renderOverview(); });
+  });
   $$("#charTable tr.click").forEach(tr => tr.addEventListener("click", () => showChar(tr.dataset.n)));
-  renderFromChars();
-}
-// characters you play (not ticked as mules) whose personal stash Sort & Distribute may empty too
-function renderFromChars() {
-  const picked = new Set(store.get("fromChars", []));
-  const list = S.characters.filter(c => !c.blocked && !muleSel[c.name]).sort((a, b) => a.name.localeCompare(b.name));
-  $("#fromChars").innerHTML = list.length ? list.map(c => `<label><input type="checkbox" value="${esc(c.name)}" ${picked.has(c.name) ? "checked" : ""}>${esc(c.name)} <span class="muted small">lvl ${c.level} ${esc(c.class)}</span></label>`).join("")
-    : `<span class="small muted">Every character that can use this stash is ticked as a mule.</span>`;
-  const sum = () => {
-    const c = $$("#fromChars input:checked").map(i => i.value);
-    $("#fromSummary").textContent = c.length ? c.join(", ") : "Nobody — mules and the shared stash only";
-    store.set("fromChars", c);
-  };
-  $$("#fromChars input").forEach(i => i.onchange = sum); sum();
+  const from = withRole("empty");
+  $("#fromSummary").innerHTML = from.length ? esc(from.join(", "))
+    : `<span class="muted">Nobody. Set a character's role to <b>Empty stash</b> on the Overview.</span>`;
 }
 function syncModeFields() { $("#fromField").style.display = $("input[name=mode]:checked").value === "migrate" ? "none" : ""; }
 $$("input[name=mode]").forEach(r => r.addEventListener("change", syncModeFields));
@@ -169,11 +178,8 @@ function renameDialog(name) {
       $("#mGo").textContent = "Renaming…";
       const r = await api("/api/apply", { plan_id: p.id });
       const newName = p.renames[0].new;
-      if (muleSel && name in muleSel) { muleSel[newName] = muleSel[name]; delete muleSel[name]; store.set("muleSel", muleSel); }
-      const fc = store.get("fromChars", []);
-      if (fc.includes(name)) store.set("fromChars", fc.map(n => n === name ? newName : n));
-      modal(`<h2>Done ✔</h2><p><b>${esc(name)}</b> is now <b>${esc(newName)}</b>.</p><p class="small">Backup: <span class="mono">${esc(r.backup)}</span></p><div class="row" style="justify-content:flex-end"><button class="btn primary" id="mOk">OK</button></div>`);
-      $("#mOk").onclick = closeModal;
+      if (roles && name in roles) { roles[newName] = roles[name]; delete roles[name]; store.set("roles", roles); }
+      notify("Done ✔", `<p><b>${esc(name)}</b> is now <b>${esc(newName)}</b>.</p><p class="small">Backup: <span class="mono">${esc(r.backup)}</span></p>`);
       allItems = null; grail = null; curPlan = null; $("#planOut").innerHTML = "";
       await refresh(); showChar(newName);
     } catch (e) {
@@ -189,6 +195,10 @@ function renameDialog(name) {
 let stashTab = 0;
 async function loadStash() {
   stashData = await api(`/api/stash?file=${encodeURIComponent($("#stashSel").value)}`);
+  let carried = false;  // 0.7.0 and older named kept items by list position; move those flags to the new keys
+  for (const t of stashData.tabs) for (const it of t.items)
+    if (it.legacy_key && kept.has(it.legacy_key)) { kept.delete(it.legacy_key); kept.add(it.key); carried = true; }
+  if (carried) store.set("kept", [...kept]);
   if (!stashData.tabs[stashTab] || stashData.tabs[stashTab].type === 2) stashTab = 0;
   let n = 0;
   $("#stashTabs").innerHTML = stashData.tabs.map((t, i) => t.type === 2 ? "" :
@@ -215,7 +225,7 @@ function planOptions() {
     mode: $("input[name=mode]:checked").value, rename: $("#rename").value, use_stackables: $("#stackables").checked,
     stash_file: $("#stashSel").value, mules: selectedMules(), mule_max_level: +$("#muleLevel").value || 1,
     mule_name_hint: $("#muleHint").checked, limit: +$("#limit").value, create_mules: +$("#createMules").value, compact: true,
-    from_chars: $$("#fromChars input:checked").map(o => o.value),
+    from_chars: withRole("empty"),
     keep_in_stash: $$("#keepCats input:checked").map(o => o.value), keep_items: [...kept], crafter_level: +$("#crafter").value || undefined,
   };
 }
@@ -288,17 +298,18 @@ function confirmApply() {
     $("#mGo").disabled = true; $("#mGo").textContent = "Applying…";
     try {
       const r = await api("/api/apply", { plan_id: p.id });
-      modal(`<h2>Done ✔</h2><p>${esc(r.log_lines.at(-1) || "")}</p><p class="small">Backup: <span class="mono">${esc(r.backup)}</span></p>
-        <p class="small muted">Changed your mind? <b>Backups → Undo</b> reverses exactly this change.</p><div class="row" style="justify-content:flex-end"><button class="btn primary" id="mOk">OK</button></div>`);
-      $("#mOk").onclick = closeModal;
+      applied(r, `<p class="small muted">Changed your mind? <b>Backups → Undo</b> reverses exactly this change.</p>`);
       curPlan = null; $("#planOut").innerHTML = ""; allItems = null; grail = null; await refresh();
-    } catch (e) {
-      modal(`<h2>Nothing was changed</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`);
-      $("#mOk").onclick = closeModal;
-    }
+    } catch (e) { failed(e); }
   };
 }
 function modal(html) { $("#modalBody").innerHTML = html; $("#modal").style.display = "flex"; }
+function notify(title, html = "", primary = true) {
+  modal(`<h2>${title}</h2>${html}<div class="row" style="justify-content:flex-end"><button class="btn ${primary ? "primary" : ""}" id="mOk">OK</button></div>`);
+  $("#mOk").onclick = closeModal;
+}
+const failed = (e, title = "Nothing was changed") => notify(title, `<div class="notice bad">${esc(e.message)}</div>`, false);
+const applied = (r, extra = "") => notify("Done ✔", `<p>${esc(r.log_lines.at(-1) || "")}</p><p class="small">Backup: <span class="mono">${esc(r.backup)}</span></p>${extra}`);
 function closeModal() { $("#modal").style.display = "none"; }
 
 // ---------------------------------------------------------------- find
@@ -649,12 +660,14 @@ async function tzUpdate(body) { TZ = await api("/api/tz/update", body); renderTz
 $("#tzZone").onchange = () => tzUpdate({ zone: $("#tzZone").value });
 $("#tzFav").onclick = () => tzUpdate({ favourite: $("#tzZone").value });
 $("#tzAuto").onchange = () => tzUpdate({ auto_revert: $("#tzAuto").checked });
-$("#tzBackup").onclick = async () => {
-  $("#tzBackup").disabled = true; $("#tzBackupMsg").textContent = "Backing up…";
-  try { const r = await api("/api/backup_now", {}); $("#tzBackupMsg").innerHTML = `Saved <span class="mono">${esc(r.backup.split(/[\\/]/).pop())}</span> (see Backups).`; tzBackedUp = true; }
-  catch (e) { $("#tzBackupMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
-  $("#tzBackup").disabled = false;
-};
+async function backupNow(btn, msg) {
+  btn.disabled = true; msg.textContent = "Backing up…";
+  try { const r = await api("/api/backup_now", {}); msg.innerHTML = `Saved <span class="mono">${esc(r.backup.split(/[\\/]/).pop())}</span>.`; return true; }
+  catch (e) { msg.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; return false; }
+  finally { btn.disabled = false; }
+}
+$("#tzBackup").onclick = async () => { if (await backupNow($("#tzBackup"), $("#tzBackupMsg"))) tzBackedUp = true; };
+$("#backupNow").onclick = async () => { if (await backupNow($("#backupNow"), $("#backupNowMsg"))) loadBackups(); };
 let tzBackedUp = false;
 $("#tzSet").onclick = () => {
   const p = TZ.picked;
@@ -667,12 +680,12 @@ $("#tzSet").onclick = () => {
   $("#mGo").onclick = async () => {
     $("#mGo").disabled = true; $("#mGo").textContent = "Waiting for Windows…";
     try { TZ = await api("/api/tz/set", { zone: p.zone }); closeModal(); renderTz(); await refresh(); }
-    catch (e) { modal(`<h2>Clock not changed</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`); $("#mOk").onclick = closeModal; }
+    catch (e) { failed(e, "Clock not changed"); }
   };
 };
 async function tzRevert() {
   try { TZ = await api("/api/tz/revert", {}); if ($("#tz").classList.contains("active")) renderTz(); await refresh(); }
-  catch (e) { modal(`<h2>Clock not restored</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`); $("#mOk").onclick = closeModal; }
+  catch (e) { failed(e, "Clock not restored"); }
 }
 $("#tzRevert").onclick = tzRevert;
 
@@ -826,7 +839,7 @@ function updateEmptyBar() {
 }
 async function confirmDelete(planPath, body, what) {
   let p;
-  try { p = await api(planPath, body); } catch (e) { modal(`<h2>Can't do that</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`); $("#mOk").onclick = closeModal; return; }
+  try { p = await api(planPath, body); } catch (e) { failed(e, "Can't do that"); return; }
   const list = p.deletions.map(d => `<li>${esc(d.name)} <span class="muted">— ${esc(d.where)}</span></li>`).concat(
     p.delete_chars.map(d => `<li><b>${esc(d.name)}</b> <span class="muted">(level ${d.level}, ${esc(d.file)} and its side files)</span></li>`)).join("");
   modal(`<h2>Delete ${what}?</h2><ul class="small" style="max-height:300px;overflow:auto">${list}</ul>
@@ -839,13 +852,10 @@ async function confirmDelete(planPath, body, what) {
     $("#mGo").disabled = true; $("#mGo").textContent = "Deleting…";
     try {
       const r = await api("/api/apply", { plan_id: p.id });
-      modal(`<h2>Done ✔</h2><p>${esc(r.log_lines.at(-1) || "")}</p><p class="small">Backup: <span class="mono">${esc(r.backup)}</span></p><div class="row" style="justify-content:flex-end"><button class="btn primary" id="mOk">OK</button></div>`);
+      applied(r);
       dupPicked.clear(); emptyPicked.clear(); allItems = null; grail = null;
       await refresh();
-    } catch (e) {
-      modal(`<h2>Nothing was changed</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`);
-    }
-    $("#mOk").onclick = closeModal;
+    } catch (e) { failed(e); }
   };
 }
 $("#dKind").onchange = renderDupes; $("#dq").oninput = renderDupes;
@@ -889,9 +899,8 @@ async function loadBackups() {
       <div class="row" style="justify-content:flex-end"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo">${title.split(" ")[0]}</button></div>`);
     $("#mCancel").onclick = closeModal;
     $("#mGo").onclick = async () => {
-      try { await go(); modal(`<h2>Done ✔</h2><div class="row" style="justify-content:flex-end"><button class="btn primary" id="mOk">OK</button></div>`); allItems = null; grail = null; await refresh(); }
-      catch (e) { modal(`<h2>Nothing was changed</h2><div class="notice bad">${esc(e.message)}</div><div class="row" style="justify-content:flex-end"><button class="btn" id="mOk">OK</button></div>`); }
-      $("#mOk").onclick = closeModal;
+      try { await go(); notify("Done ✔"); allItems = null; grail = null; await refresh(); }
+      catch (e) { failed(e); }
     };
   };
   $$("[data-u]").forEach(b => b.onclick = () => confirm("Undo this change?", "The files it changed are put back and anything it created is removed. The current state is backed up first.", () => api("/api/undo", { log: b.dataset.u })));
@@ -920,10 +929,7 @@ async function refresh() {
   sel.innerHTML = S.stashes.map(s => `<option value="${esc(s.file)}">${esc(s.file)}${s.modern ? " (RotW)" : ""} — ${s.items} items</option>`).join("");
   sel.value = S.stashes.some(s => s.file === prev) ? prev : S.default_stash;
   if (!$("#crafter").value) $("#crafter").value = store.get("crafter", S.crafter_level || 99);
-  muleSel = store.get("muleSel", null);
-  if (!muleSel || Object.keys(muleSel).some(n => !S.characters.find(c => c.name === n))) muleSel = defaultMules();
-  const def = defaultMules();
-  for (const c of S.characters) if (!(c.name in muleSel)) muleSel[c.name] = def[c.name];
+  await loadRoles();
   const keepSel = new Set(store.get("keepCats", []));
   $("#keepCats").innerHTML = S.category_order.map(k => `<label><input type="checkbox" value="${k}" ${keepSel.has(k) ? "checked" : ""}>${esc(S.categories[k])}</label>`).join("");
   const keepSum = () => { const c = $$("#keepCats input:checked"); $("#keepSummary").textContent = c.length ? c.map(i => S.categories[i.value]).join(", ") : "Nothing — move everything"; store.set("keepCats", c.map(i => i.value)); };
@@ -947,8 +953,7 @@ $$("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.
 $("#reloadBtn").onclick = async () => { await api("/api/reload", {}); curPlan = null; allItems = null; grail = null; $("#planOut").innerHTML = ""; await refresh(); };
 $("#planBtn").onclick = preview;
 $("#stashSel").onchange = () => { store.set("stash", $("#stashSel").value); stashTab = 0; renderOverview(); loadStash(); };
-$("#muleLevel").onchange = $("#muleHint").onchange = () => { muleSel = defaultMules(); store.set("muleSel", muleSel); renderOverview(); };
-$("#resetMules").onclick = () => { muleSel = defaultMules(); store.set("muleSel", muleSel); renderOverview(); };
+$("#muleLevel").onchange = $("#muleHint").onchange = $("#resetMules").onclick = resetRoles;
 $("#crafter").onchange = () => { store.set("crafter", +$("#crafter").value); allItems = null; loadAssess(); };
 $("#scope").onchange = loadAssess;
 ["#kind", "#minTier", "#keepOnly"].forEach(s => $(s).onchange = renderAssess);

@@ -18,8 +18,8 @@ Runs locally on your PC; nothing is uploaded anywhere.
 - **Full re-sort** — lay out the stash and every mule again, category by category.
 - **Bring the old stash forward** — move the Resurrected-era shared stash into the RotW one (forward only, like
   the game's character transfer). Gold stays where it is.
-- **Empty your characters' personal stashes too** — tick the characters you play and their stash goes onto the
-  mules along with the shared stash (works with every mode except *Bring the old stash forward*). Their inventory,
+- **Empty your characters' personal stashes too** — set a character you play to *Empty stash* on the Overview and
+  their stash goes onto the mules along with the shared stash (works with every mode except *Bring the old stash forward*). Their inventory,
   cube and gear stay put, and so do the Horadric Cube itself and quest items.
 - **Rename mules** to match their contents (`CharmsOne`, `CraftBaitTwo`, …).
 - **Rename any character** from its page on the Overview (`StashSorter.exe rename OldName NewName` in the terminal).
@@ -112,11 +112,11 @@ download this folder, and double-click **`Stash Sorter.bat`** — or run `python
 
 ### In the app
 
-1. **Overview** — your characters. Ticked ones are used as mules (default: level-1 characters and anything with
-   "mule" in the name that can use the stash). Untick anything you want left alone; click a row to look inside.
+1. **Overview** — your characters, each with a **role**: *Mule* (default: level-1 characters and anything with
+   "mule" in the name that can use the stash), *Empty stash* (a character you play whose personal stash should go
+   onto the mules too) or *Leave alone*. Click a row to look inside.
 2. **Shared Stash** — click items you want to **keep** in the stash (⚑).
-3. **Sort & Distribute** — pick a mode, tick any characters whose personal stash should be emptied too,
-   **Preview plan**, check where things go, then **Apply**.
+3. **Sort & Distribute** — pick a mode, **Preview plan**, check where things go, then **Apply**.
    New to it? Set *Test run* to "Just 1 item" first.
 4. **Session** — start a session before you play; every Save & Exit shows up as a run.
    **Terror Zones** — pick a zone, set the clock, revert when you're done.
