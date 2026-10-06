@@ -9,7 +9,9 @@ Modes
   migrate     move the older (Resurrected-era) shared stash into the newer (RotW) one, as the game's own
               character transfer allows; it only goes forward in time
 
-Plus two clean-up plans: deleting chosen items (e.g. duplicates) and deleting empty mules.
+Every mode except migrate can also empty the personal stash of characters you play (`from_chars`) onto the mules.
+
+Plus clean-up plans: deleting chosen items (e.g. duplicates), deleting empty mules, and renaming a character.
 """
 
 import copy
@@ -50,6 +52,7 @@ class Options:
     mule_name_hint: bool = True      # ...and so do characters with "mule" in their name
     mules: list = None               # explicit mule names (overrides the two rules above)
     exclude: list = field(default_factory=list)
+    from_chars: list = field(default_factory=list)  # non-mule characters whose personal stash is emptied too
     use_stackables: bool = False     # (beta) merge runes/gems/materials into the RotW Stackables tab
     rename: str = "none"             # none | new | all
     keep_in_stash: list = field(default_factory=list)  # categories to leave in the stash
@@ -342,6 +345,37 @@ class _Planner:
                 self.origin_spot[id(it)] = (stash.path.name, None, it.x, it.y)
                 self._pool_add(it, key, stash.path.name, f"{label} tab {ti + 1} ({it.x},{it.y})")
 
+    def _pool_characters(self):
+        """The personal stash of each character in `from_chars` goes onto the mules too (never their
+        inventory, cube or gear, nor the cube itself or quest items)."""
+        wanted = {n.lower() for n in self.opts.from_chars}
+        if not wanted:
+            return
+        mules = {m.file.lower() for m in self.containers}
+        excluded = {n.lower() for n in self.opts.exclude}
+        emptied = []
+        for ch in self.world.characters:
+            if ch.name.lower() not in wanted or ch.path.name.lower() in mules or ch.name.lower() in excluded:
+                continue
+            ok, reason = mule_status(ch, self.stash, 99)
+            if not ok:
+                self.plan.notes.append(f"{ch.name}'s stash stays put: {reason}.")
+                continue
+            n = 0
+            for idx, it in enumerate(ch.items):
+                if it.mode != MODE_STORED or it.page != PAGE_STASH or it.code == "box":
+                    continue
+                base = self.gd.items.get(it.code)
+                key = item_key(ch.path.name, "items", idx)
+                if (base is not None and base.quest) or key in self.keep_items                         or self.rules.categorize(it) in self.opts.keep_in_stash:
+                    continue
+                self.origin_spot[id(it)] = (ch.path.name, it.page, it.x, it.y)
+                self._pool_add(it, key, ch.path.name, f"{ch.name} stash ({it.x},{it.y})")
+                n += 1
+            emptied.append(f"{ch.name} ({n})")
+        if emptied:
+            self.plan.notes.append("Also emptying the personal stash of " + ", ".join(emptied) + ".")
+
     def select_mules(self):
         opts = self.opts
         excluded = {n.lower() for n in opts.exclude}
@@ -522,6 +556,7 @@ class _Planner:
             return self._migrate()
         self.select_mules()
         self._pool_stash(self.stash)
+        self._pool_characters()
         self.load_mule_contents("all" if mode == "reorganize" else None)
         self.plan_stacking()
         by_cat = {}
@@ -785,4 +820,26 @@ def plan_mule_deletions(world, names, max_level=1):
         if ch.level > max_level and "mule" not in ch.name.lower():
             raise ValueError(f"{ch.name} is level {ch.level}, which doesn't look like a mule")
         plan.delete_chars.append(CharDeletion(ch.name, ch.path.name, ch.level))
+    return plan
+
+
+def plan_character_rename(world, name, new_name):
+    """A plan that renames one character (its save and side files); any character, not just mules."""
+    ch = world.character(name)
+    if ch is None:
+        raise ValueError(f"no character called {name}")
+    new_name = (new_name or "").strip()
+    if not valid_character_name(new_name):
+        raise ValueError(f"'{new_name}' isn't a name the game allows: 2-15 letters, starting with a letter, "
+                         "with at most one - or _ (not at the end)")
+    if new_name == ch.name:
+        raise ValueError(f"{ch.name} already has that name")
+    if new_name.lower() == ch.name.lower():
+        raise ValueError("Windows file names ignore capitals, so a name that only changes capitals can't be "
+                         "saved: rename it to something else first, then back")
+    taken = world.character(new_name)
+    if taken is not None or any(p.stem.lower() == new_name.lower() for p in world.save_dir.iterdir()):
+        raise ValueError(f"{new_name} is already taken")
+    plan = Plan(options=Options(mode="rename-char"), stash_file="")
+    plan.renames.append(Rename(ch.name, new_name, "", ch.path.name))
     return plan

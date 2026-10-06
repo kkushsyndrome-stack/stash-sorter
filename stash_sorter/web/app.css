@@ -91,6 +91,11 @@ details summary { cursor: pointer; color: var(--muted); }
 .res .pic { width: 46px; min-width: 46px; height: 64px; display: flex; align-items: center; justify-content: center; }
 .res .pic img { max-width: 46px; max-height: 64px; }
 .res .stats { color: var(--stat); font-size: 12px; } .res .where { font-size: 12px; color: var(--muted); }
+.res .grow { flex: 1; min-width: 0; }
+.res .loc { font-size: 13px; color: var(--accent); margin: 2px 0 3px; }
+.spot { display: grid; gap: 1px; align-self: flex-start; flex: none; }
+.spot i { aspect-ratio: 1; background: var(--line); border-radius: 1px; }
+.spot i.on { background: var(--accent); }
 .grail { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; }
 .gi { display: flex; gap: 8px; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 .gi.missing { opacity: .45; } .gi img { width: 32px; height: 40px; object-fit: contain; } .gi .b { font-size: 11px; color: var(--muted); }

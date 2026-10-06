@@ -165,19 +165,24 @@ class Session:
         out = []
         for c in self.world.characters:
             for i, it in enumerate(c.items):
-                out.append(self.item_json(it, f"{c.name} - {_where(it)}", planner.item_key(c.path.name, "items", i),
-                                          rs=rs))
+                j = self.item_json(it, f"{c.name} - {_where(it)}", planner.item_key(c.path.name, "items", i), rs=rs)
+                j["owner"], j["place"] = c.name, _where(it)
+                out.append(j)
         for s in self.world.stashes:
+            owner = _stash_label(s)
             for ti, t in enumerate(s.tabs):
                 if t.type == TAB_NORMAL:
                     for i, it in enumerate(t.items):
-                        out.append(self.item_json(it, f"{s.path.stem} tab {ti + 1}",
-                                                  planner.item_key(s.path.name, f"tab{ti}", i), rs=rs))
+                        j = self.item_json(it, f"{s.path.stem} tab {ti + 1}",
+                                           planner.item_key(s.path.name, f"tab{ti}", i), rs=rs)
+                        j["owner"], j["place"], j["stash_tab"] = owner, f"tab {ti + 1}", True
+                        out.append(j)
                 elif t.type == TAB_STACKABLES:
                     for it in t.items:
                         if it.stack_count:
                             j = self.item_json(it, f"{s.path.stem} Stackables", rs=rs)
                             j["count"] = it.stack_count
+                            j["owner"], j["place"] = owner, "Stackables tab"
                             out.append(j)
         return out
 
@@ -274,6 +279,7 @@ class Session:
             compact=bool(o.get("compact", True)),
             mules=o.get("mules") or None,
             exclude=o.get("exclude") or [],
+            from_chars=o.get("from_chars") or [],
             use_stackables=bool(o.get("use_stackables", False)),
             rename=o.get("rename", "none"),
             keep_in_stash=o.get("keep_in_stash") or [],
@@ -595,6 +601,11 @@ class Session:
         self.plan_id += 1
         return self.plan_json()
 
+    def plan_rename_char(self, name, new_name):
+        self.plan = planner.plan_character_rename(self.world, name, new_name)
+        self.plan_id += 1
+        return self.plan_json()
+
     def apply(self, plan_id, log=print):
         if self.plan is None or plan_id != self.plan_id:
             raise applier.ApplyError("The plan is out of date. Preview it again before applying.")
@@ -650,6 +661,11 @@ class Session:
         res = applier.recover(self.backup_dir)
         self.reload()
         return {"recovered": bool(res)}
+
+
+def _stash_label(s):
+    era = "RotW" if s.modern else "Resurrected"
+    return f"Shared stash ({era}{', hardcore' if s.hardcore else ''})"
 
 
 def _where(it):

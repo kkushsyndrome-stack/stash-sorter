@@ -156,6 +156,8 @@ def serve(session, port=0, open_browser=True):
                         return self._send(200, session.plan_delete_items(body.get("keys") or []))
                     if path == "/api/plan_delete_mules":
                         return self._send(200, session.plan_delete_mules(body.get("names") or []))
+                    if path == "/api/plan_rename_char":
+                        return self._send(200, session.plan_rename_char(body.get("name", ""), body.get("new", "")))
                     if path == "/api/apply":
                         logs = []
                         res = session.apply(int(body.get("plan_id", -1)), log=logs.append)

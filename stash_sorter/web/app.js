@@ -119,11 +119,28 @@ function renderOverview() {
     e.stopPropagation(); muleSel[cb.dataset.mule] = cb.checked; store.set("muleSel", muleSel); renderOverview();
   }));
   $$("#charTable tr.click").forEach(tr => tr.addEventListener("click", () => showChar(tr.dataset.n)));
+  renderFromChars();
 }
+// characters you play (not ticked as mules) whose personal stash Sort & Distribute may empty too
+function renderFromChars() {
+  const picked = new Set(store.get("fromChars", []));
+  const list = S.characters.filter(c => !c.blocked && !muleSel[c.name]).sort((a, b) => a.name.localeCompare(b.name));
+  $("#fromChars").innerHTML = list.length ? list.map(c => `<label><input type="checkbox" value="${esc(c.name)}" ${picked.has(c.name) ? "checked" : ""}>${esc(c.name)} <span class="muted small">lvl ${c.level} ${esc(c.class)}</span></label>`).join("")
+    : `<span class="small muted">Every character that can use this stash is ticked as a mule.</span>`;
+  const sum = () => {
+    const c = $$("#fromChars input:checked").map(i => i.value);
+    $("#fromSummary").textContent = c.length ? c.join(", ") : "Nobody — mules and the shared stash only";
+    store.set("fromChars", c);
+  };
+  $$("#fromChars input").forEach(i => i.onchange = sum); sum();
+}
+function syncModeFields() { $("#fromField").style.display = $("input[name=mode]:checked").value === "migrate" ? "none" : ""; }
+$$("input[name=mode]").forEach(r => r.addEventListener("change", syncModeFields));
 async function showChar(name) {
   const c = await api(`/api/character?name=${encodeURIComponent(name)}`);
   const v = $("#charView"); v.style.display = "block";
-  v.innerHTML = `<h2>${esc(c.name)} <span class="muted small">${esc(c.class)} · level ${c.level}${c.gold ? ` · ${c.gold.toLocaleString()} gold` : ""}${c.has_cube ? " · has Horadric Cube" : ""}</span></h2>`;
+  v.innerHTML = `<div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(c.name)} <span class="muted small">${esc(c.class)} · level ${c.level}${c.gold ? ` · ${c.gold.toLocaleString()} gold` : ""}${c.has_cube ? " · has Horadric Cube" : ""}</span></h2><button class="btn" id="renameChar">Rename…</button></div>`;
+  $("#renameChar").onclick = () => renameDialog(c.name);
   const g = document.createElement("div"); g.className = "grids";
   for (const page of [5, 1].concat(c.has_cube ? [4] : [])) g.appendChild(gridBox(PAGE[page], c.items.filter(i => i.mode === 0 && i.page === page), page));
   v.appendChild(g);
@@ -134,6 +151,38 @@ async function showChar(name) {
     v.appendChild(p);
   }
   v.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renameDialog(name) {
+  modal(`<h2>Rename ${esc(name)}</h2>
+    <div class="field"><label>New name</label><input type="text" id="mNew" maxlength="15" value="${esc(name)}" autocomplete="off"></div>
+    <p class="small muted">2–15 letters, starting with a letter; at most one - or _ (not at the end). The save and its side files (key bindings, map) are renamed together.</p>
+    <div class="notice">Close Diablo II: Resurrected completely first. Your whole save folder is backed up, and <b>Backups → Undo</b> puts the old name back.</div>
+    <div id="mErr"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo">Rename</button></div>`);
+  const input = $("#mNew"); input.focus(); input.select();
+  $("#mCancel").onclick = closeModal;
+  const go = async () => {
+    $("#mGo").disabled = true; $("#mErr").innerHTML = "";
+    try {
+      const p = await api("/api/plan_rename_char", { name, new: input.value });
+      $("#mGo").textContent = "Renaming…";
+      const r = await api("/api/apply", { plan_id: p.id });
+      const newName = p.renames[0].new;
+      if (muleSel && name in muleSel) { muleSel[newName] = muleSel[name]; delete muleSel[name]; store.set("muleSel", muleSel); }
+      const fc = store.get("fromChars", []);
+      if (fc.includes(name)) store.set("fromChars", fc.map(n => n === name ? newName : n));
+      modal(`<h2>Done ✔</h2><p><b>${esc(name)}</b> is now <b>${esc(newName)}</b>.</p><p class="small">Backup: <span class="mono">${esc(r.backup)}</span></p><div class="row" style="justify-content:flex-end"><button class="btn primary" id="mOk">OK</button></div>`);
+      $("#mOk").onclick = closeModal;
+      allItems = null; grail = null; curPlan = null; $("#planOut").innerHTML = "";
+      await refresh(); showChar(newName);
+    } catch (e) {
+      $("#mErr").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
+      $("#mGo").disabled = false; $("#mGo").textContent = "Rename";
+    }
+  };
+  $("#mGo").onclick = go;
+  input.onkeydown = e => { if (e.key === "Enter") go(); };
 }
 
 // ---------------------------------------------------------------- shared stash
@@ -166,6 +215,7 @@ function planOptions() {
     mode: $("input[name=mode]:checked").value, rename: $("#rename").value, use_stackables: $("#stackables").checked,
     stash_file: $("#stashSel").value, mules: selectedMules(), mule_max_level: +$("#muleLevel").value || 1,
     mule_name_hint: $("#muleHint").checked, limit: +$("#limit").value, create_mules: +$("#createMules").value, compact: true,
+    from_chars: $$("#fromChars input:checked").map(o => o.value),
     keep_in_stash: $$("#keepCats input:checked").map(o => o.value), keep_items: [...kept], crafter_level: +$("#crafter").value || undefined,
   };
 }
@@ -265,10 +315,27 @@ function renderFind() {
   for (const it of hits.slice(0, 300)) {
     const d = document.createElement("div"); d.className = "res";
     d.innerHTML = `<div class="pic">${it.art && S.art ? `<img src="${artUrl(it.art)}" alt="" loading="lazy">` : ""}</div>
-      <div><div class="q-${esc(it.quality)}">${esc(it.name)}${it.count ? ` ×${it.count}` : ""}</div><div class="where">${esc(it.where)} · ilvl ${it.ilvl}</div>
+      <div class="grow"><div class="q-${esc(it.quality)}">${esc(it.name)}${it.count ? ` ×${it.count}` : ""} <span class="muted small">ilvl ${it.ilvl}</span></div>
+      <div class="loc"><b>${esc(it.owner || it.where)}</b>${it.place ? ` · ${esc(it.place)}` : ""}</div>
       <div class="stats">${(it.stats || []).slice(0, 4).map(esc).join("<br>")}${(it.stats || []).length > 4 ? "<br>…" : ""}</div></div>`;
+    const map = spotMap(it);
+    if (map) d.appendChild(map);
     hoverable(d, it); out.appendChild(d);
   }
+}
+// a small picture of the grid the item sits in, with its cells lit up
+function spotMap(it) {
+  const page = it.stash_tab ? 5 : it.mode === 0 ? it.page : null;
+  if (!GRID[page] || it.count) return null;
+  const [w, h] = GRID[page], m = document.createElement("div");
+  m.className = "spot"; m.style.gridTemplateColumns = `repeat(${w}, 1fr)`; m.style.width = `${w * 6 - 1}px`;
+  m.title = `${PAGE[page]}: column ${it.x + 1}, row ${it.y + 1}`;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const c = document.createElement("i");
+    if (x >= it.x && x < it.x + it.w && y >= it.y && y < it.y + it.h) c.className = "on";
+    m.appendChild(c);
+  }
+  return m;
 }
 
 // ---------------------------------------------------------------- collection
@@ -905,7 +972,7 @@ refresh().then(async () => {
   if (sec) await show(sec);
   if (sec === "sort" && action === "preview") {  // previews never change anything
     const radio = mode && $(`input[name=mode][value="${mode}"]`);
-    if (radio) radio.checked = true;
+    if (radio) { radio.checked = true; syncModeFields(); }
     await preview();
   }
 }).catch(e => { $("#banner").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; });

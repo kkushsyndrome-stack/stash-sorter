@@ -25,6 +25,7 @@ def _plan_opts(args):
         "stash_file": args.stash, "source_stash": args.source_stash, "mule_max_level": args.mule_level,
         "mule_name_hint": not args.no_name_hint, "mules": _split(args.mules) or None,
         "exclude": _split(args.exclude), "keep_in_stash": _split(args.keep), "limit": args.limit,
+        "from_chars": _split(args.from_chars),
         "create_mules": args.create_mules, "crafter_level": args.crafter_level, "compact": not args.no_compact,
     }
 
@@ -176,6 +177,17 @@ def cmd_delete_mules(args):
     s = _session(args)
     try:
         p = s.plan_delete_mules(args.names)
+    except ValueError as e:
+        print(f"Nothing was changed: {e}")
+        sys.exit(2)
+    _print_plan(p)
+    _confirm_and_apply(s, p, args.yes)
+
+
+def cmd_rename(args):
+    s = _session(args)
+    try:
+        p = s.plan_rename_char(args.name, args.new_name)
     except ValueError as e:
         print(f"Nothing was changed: {e}")
         sys.exit(2)
@@ -412,6 +424,7 @@ def main(argv=None):
         p.add_argument("--no-name-hint", action="store_true", help="don't treat characters with 'mule' in the name as mules")
         p.add_argument("--mules", help="comma-separated mule names (overrides the rules above)")
         p.add_argument("--exclude", help="comma-separated character names never to touch")
+        p.add_argument("--from-chars", help="comma-separated characters whose personal stash is emptied onto mules too")
         p.add_argument("--keep", help="comma-separated categories to leave in the stash (e.g. runes,gems)")
         p.add_argument("--limit", type=int, default=0, help="test run: only move this many items")
         p.add_argument("--create-mules", type=int, default=0, help="(experimental) create up to N new mules if needed")
@@ -465,6 +478,11 @@ def main(argv=None):
     p.add_argument("names", nargs="+")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(func=cmd_delete_mules)
+    p = sub.add_parser("rename", help="rename a character (save + side files); backed up and undoable")
+    p.add_argument("name")
+    p.add_argument("new_name")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_rename)
     sub.add_parser("backups", help="list backups (and which changes can be undone)").set_defaults(func=cmd_backups)
     p = sub.add_parser("undo", help="undo one apply, given its -log.json file name")
     p.add_argument("log")

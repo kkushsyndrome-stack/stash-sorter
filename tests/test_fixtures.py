@@ -219,6 +219,37 @@ class Sandbox(unittest.TestCase):
             if p.suffix != ".d2s":
                 (self.saves / f"{name}{p.suffix}").write_bytes(p.read_bytes())
 
+    def test_personal_stash_goes_to_mules(self):
+        w = W.load_world(self.saves, GD)
+        sorc = w.character("Sorceress")
+        stash_codes = [i.code for i in sorc.items if i.mode == 0 and i.page == 5]
+        plan, _ = self._apply(mode="tidy", mules=["barbrotw", "ChaosSC", "Amazon", "Druid", "Warlock"],
+                              from_chars=["Sorceress", "Roka"])
+        from_sorc = [m for m in plan.moves if m.src_file == sorc.path.name]
+        self.assertTrue(from_sorc)
+        self.assertTrue(all(m.dst_file != sorc.path.name for m in plan.moves))
+        self.assertTrue(any("Roka's stash stays put" in n for n in plan.notes))  # Resurrected-era character
+        left = [i.code for i in W.load_world(self.saves, GD).character("Sorceress").items if i.mode == 0 and i.page == 5]
+        self.assertIn("mss", left)  # quest items stay with their character
+        self.assertEqual(len(left), len(stash_codes) - len(from_sorc))
+
+    def test_rename_character_then_undo(self):
+        before = self._snapshot()
+        w = W.load_world(self.saves, GD)
+        for bad in ("R", "Roka2", "a-b-c", "Soska", "ROKA"):
+            with self.assertRaises(ValueError, msg=bad):
+                planner.plan_character_rename(w, "Roka", bad)
+        plan = planner.plan_character_rename(w, "Roka", "Rokanew")
+        res = A.apply_plan(w, plan, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertFalse((self.saves / "Roka.d2s").exists())
+        w2 = W.load_world(self.saves, GD)
+        renamed = w2.character("Rokanew")
+        self.assertEqual(renamed.path.name, "Rokanew.d2s")
+        self.assertEqual(renamed.level, 99)
+        self.assertEqual([_identity(i) for i in renamed.items], [_identity(i) for i in w.character("Roka").items])
+        A.undo_apply(res["log"], self.saves, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertEqual(self._snapshot(), before)
+
     def test_delete_empty_mule_then_undo(self):
         self._empty_mule("SpareMule")
         before = self._snapshot()
