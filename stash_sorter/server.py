@@ -16,6 +16,7 @@ from .apply import ApplyError
 from .clock import ClockError
 from .launcher import LaunchError
 from .rules import RulesError
+from .artmod import ArtModError
 
 WEB_DIR = Path(__file__).parent / "web"
 STATIC = {"app.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8", "tz-art.png": "image/png"}
@@ -95,6 +96,7 @@ def serve(session, port=0, open_browser=True):
                         "/api/seedrun": lambda: session.seedrun_state(),
                         "/api/session/load": lambda: session.session_load(q.get("id", "")),
                         "/api/backups": lambda: session.backups(),
+                        "/api/artmod": lambda: session.artmod_state(),
                         "/api/mule_defaults": lambda: session.mule_defaults(int(q.get("level") or 1),
                                                                             q.get("hint", "1") == "1"),
                     }
@@ -148,6 +150,7 @@ def serve(session, port=0, open_browser=True):
                         "/api/session/delete": lambda: session.session_delete(body.get("id", "")),
                         "/api/plan_delete_items": lambda: session.plan_delete_items(body.get("keys") or []),
                         "/api/plan_delete_mules": lambda: session.plan_delete_mules(body.get("names") or []),
+                        "/api/plan_restyle": lambda: session.plan_restyle(body.get("changes") or []),
                         "/api/plan_rename_char": lambda: session.plan_rename_char(body.get("name", ""),
                                                                                   body.get("new", "")),
                         "/api/apply": apply,
@@ -156,10 +159,16 @@ def serve(session, port=0, open_browser=True):
                         "/api/recover": lambda: session.recover(),
                         "/api/rules": lambda: session.save_rules(body.get("rules")),
                         "/api/rules/reset": lambda: session.reset_rules(),
+                        "/api/artmod/set_art": lambda: session.artmod_set_art(body),
+                        "/api/artmod/reset_art": lambda: session.artmod_reset_art(body),
+                        "/api/artmod/set_look": lambda: session.artmod_set_look(body),
+                        "/api/artmod/reset_look": lambda: session.artmod_reset_look(body),
+                        "/api/artmod/restore": lambda: session.artmod_restore(body),
+                        "/api/artmod/forget": lambda: session.artmod_forget(),
                     }
                     if path in routes:
                         return self._send(200, routes[path]())
-            except (ApplyError, RulesError, ValueError, ClockError, LaunchError) as e:
+            except (ApplyError, RulesError, ValueError, ClockError, LaunchError, ArtModError) as e:
                 return self._send(409, {"error": str(e)})
             except Exception as e:
                 traceback.print_exc()
@@ -180,7 +189,7 @@ def serve(session, port=0, open_browser=True):
     threading.Thread(target=watch, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
-    print(f"Stash Sorter {__version__} is running at {url}  (close this window or press Ctrl+C to stop)")
+    print(f"Horadric Toolkit {__version__} is running at {url}  (close this window or press Ctrl+C to stop)")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     _on_console_close(lambda: session.revert_clock_on_exit())

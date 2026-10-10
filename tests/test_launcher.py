@@ -1,6 +1,7 @@
 """Battle.net launch-option tests on synthetic settings files (the real Battle.net settings are never touched)."""
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -149,12 +150,20 @@ class SeedRunTests(unittest.TestCase):
         self.saves.mkdir()
         (self.saves / "Sorc.d2s").write_bytes(b"old")
         (self.saves / "Mule.d2s").write_bytes(b"old")
-        self.running, self.launches, self.clock = set(), [], [1000.0]
+        self.running, self.launches, self.clock, self.closed = set(), [], [1000.0], []
 
-    def run_(self, launch=None):
+    def run_(self, launch=None, auto=False):
+        def closer(image, force=False):  # stands in for taskkill: never touches real programs
+            self.closed.append((image, force))
+            self.running.discard(image.lower())
         return L.SeedRun(self.tmp / "seedrun.json", saves_dir=self.saves, processes=lambda: set(self.running),
                          config=self.cfg, launch=launch or (lambda: self.launches.append(L.read_args(self.cfg))),
-                         backup_dir=self.tmp / "backups", now=lambda: self.clock[0])
+                         backup_dir=self.tmp / "backups", now=lambda: self.clock[0], closer=closer, auto=auto)
+
+    def write_map(self, name, *seeds, nxt=None):
+        slots = (list(seeds) + [0, 0, 0, 0])[:4]
+        (self.saves / f"{name}.map").write_bytes(
+            L.struct.pack("<6I", 12, len(seeds) % 4 if nxt is None else nxt, *slots))
 
     def args(self):
         return L.read_args(self.cfg)
@@ -178,6 +187,8 @@ class SeedRunTests(unittest.TestCase):
         self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
         self.assertEqual(run.tick()["stage"], "playing")
         (self.saves / "Sorc.d2s").write_bytes(b"new map")
+        later = (self.saves / "Sorc.d2s").stat().st_mtime + 5  # a save lands later than the snapshot, whatever the
+        os.utime(self.saves / "Sorc.d2s", (later, later))      # clock's granularity
         self.running = {L.BATTLENET_PROCESS}
         st = run.tick()
         self.assertEqual((st["stage"], st["changed"]), ("wait_closed_after", ["Sorc"]))
@@ -248,6 +259,69 @@ class SeedRunTests(unittest.TestCase):
         self.assertEqual(st["stage"], "cancelled")
         self.assertNotIn("-seed", self.args())
         self.assertTrue(any("isn't installed" in n for n in st["notes"]))
+
+    def test_map_seeds_newest_first(self):
+        self.write_map("Sorc", 11, 22, 33, 44, nxt=2)
+        self.assertEqual(L.map_seeds(self.saves / "Sorc.map"), [22, 11, 44, 33])
+        self.write_map("Mule", 5)
+        self.assertEqual(L.map_seeds(self.saves / "Mule.map"), [5])
+        self.assertEqual(L.map_seeds(self.saves / "nobody.map"), [])
+
+    def test_automatic_run(self):
+        self.write_map("Sorc", 111)
+        self.running = {L.BATTLENET_PROCESS}
+        run = self.run_(auto=True)
+        st = run.start(4242)
+        self.assertTrue(any("backed up" in n for n in st["notes"]))
+        self.assertTrue(list((self.tmp / "backups").glob("*before-seed-run*.zip")))
+        self.assertEqual(st["stage"], "starting")  # Battle.net was ended, the seed went in, Battle.net + D2R started
+        self.assertEqual(self.closed, [("Battle.net.exe", True)])
+        self.assertEqual(self.launches, ["-enablerespec -direct txt -seed 4242"])
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        self.assertEqual(run.tick()["stage"], "playing")
+        self.assertEqual(run.tick()["stage"], "playing")  # nothing happens until a game is created
+        self.write_map("Mule", 999)  # another character's map without the seed doesn't count
+        self.assertEqual(run.tick()["stage"], "playing")
+        self.write_map("Sorc", 111, 4242)  # the game was created: D2R wrote the seed into Sorc's map
+        st = run.tick()
+        self.assertEqual((st["stage"], st["taken_by"]), ("closing", "Sorc"))
+        self.assertEqual(self.closed, [("Battle.net.exe", True)])  # D2R is left to finish saving first
+        self.clock[0] += L.SETTLE + 1
+        (self.saves / "Sorc.d2s").write_bytes(b"saved")
+        import os
+        os.utime(self.saves / "Sorc.d2s", (1, 1))  # last written long ago
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS, "keep d2r open"}
+        self.closed.clear()
+        run.closer = lambda image, force=False: self.closed.append((image, force))  # D2R ignores the close
+        self.assertEqual(run.tick()["stage"], "closing")
+        self.assertEqual(self.closed, [("D2R.exe", False)])
+        self.clock[0] += L.FORCE_AFTER + 1
+        run.tick()
+        self.assertEqual(self.closed, [("D2R.exe", False), ("D2R.exe", True)])
+        self.running = {L.BATTLENET_PROCESS}  # D2R is gone; Battle.net still holds its settings
+        run.closer = lambda image, force=False: (self.closed.append((image, force)), self.running.discard(image.lower()))
+        st = run.tick()
+        self.assertEqual(st["stage"], "done")
+        self.assertEqual(self.closed[-1], ("Battle.net.exe", True))
+        self.assertEqual(self.args(), "-enablerespec -direct txt")
+        self.assertEqual(self.launches[-1], "-enablerespec -direct txt")  # started again, without the seed
+
+    def test_automatic_run_waits_for_d2r_and_gives_up_without_a_game(self):
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        run = self.run_(auto=True)
+        self.assertEqual(run.start(77)["stage"], "wait_closed")
+        self.assertEqual(self.closed, [])  # a running game is never closed before the seed is in
+        self.assertIn("(number goes here", self.args())
+        self.running = set()
+        self.assertEqual(run.tick()["stage"], "starting")
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        run.tick()
+        self.running = {L.BATTLENET_PROCESS}  # D2R closed before a game was created
+        st = run.tick()
+        self.assertEqual(st["stage"], "cancelled")
+        self.assertNotIn("-seed", self.args())
+        self.assertEqual(len(self.launches), 1)  # not started again: the seed didn't take
+        self.assertTrue(any("didn't take" in n for n in st["notes"]))
 
     def test_refusals(self):
         run = self.run_()

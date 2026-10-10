@@ -136,6 +136,21 @@ td input[type=text] { width: 100%; min-width: 120px; padding: 4px 6px; }
 .imm.Magic { color: #d38cff; } .imm.Physical { color: #d9d4cb; }
 .tzlist { width: 100%; } .tzlist td { padding: 6px 6px; } .tzlist tr.fav td:first-child::before { content: "★ "; color: var(--accent); }
 @media (max-width: 900px) { .tzhero { grid-template-columns: 1fr; } .tzart { min-height: 220px; } }
+.it.skinnable { cursor: pointer; } .it.skinnable:hover { outline: 1px solid var(--accent); }
+.skins { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin: 10px 0; }
+.skin { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }
+.skin:has(input:checked) { border-color: var(--accent); }
+.skin input { position: absolute; opacity: 0; pointer-events: none; }
+.skin img { max-width: 70px; max-height: 90px; } .skin .big { font-size: 26px; padding: 18px 0; color: var(--muted); }
+.iarow { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.iarow .grow { flex: 1; min-width: 0; } .iathumb { width: 44px; min-width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+.iathumb img { max-width: 44px; max-height: 44px; }
+.iagrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; max-height: 300px; overflow: auto; margin-top: 8px; }
+.iatile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; cursor: pointer; text-align: center;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.iatile img { max-width: 56px; max-height: 64px; } .iatile.sel { border-color: var(--accent); outline: 1px solid var(--accent); }
+.iatile span { max-width: 100%; word-break: break-word; }
 .lnflags { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
 .lnflag { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: pointer; }
 .lnflag input { grid-row: span 2; margin-top: 3px; } .lnflag code { font-family: Consolas, monospace; color: var(--accent); } .lnflag span { color: var(--muted); font-size: 12px; }

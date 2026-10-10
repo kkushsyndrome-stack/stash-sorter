@@ -107,7 +107,7 @@ li b {{ color: #e8e0d2; font-weight: 600; }}
 </style></head><body>
 <div class="left">
   <div class="mark">Diablo II: Resurrected</div>
-  <h1>Stash Sorter</h1>
+  <h1>Horadric Toolkit</h1>
   <p class="tag">Empty and organise your shared stash across your mules, safely.</p>
   <ul>{feats}</ul>
 </div>

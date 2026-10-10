@@ -238,6 +238,62 @@ class Sandbox(unittest.TestCase):
         self.assertTrue(again.moves)
         self.assertFalse(any(m.key == kept for m in again.moves))
 
+    def test_mule_cubes_are_left_alone(self):
+        w = W.load_world(self.saves, GD)
+        in_cube = {c.path.name: sorted(_identity(i) for i in c.items if i.mode == 0 and i.page == 4) for c in w.characters}
+        self.assertTrue(in_cube["demo_Amazon.d2s"] and in_cube["demo_Warlock.d2s"])  # items in two mules' cubes
+        plan, _ = self._apply(mode="reorganize", mules=["barbrotw", "ChaosSC", "Amazon", "Druid", "Warlock"])
+        self.assertTrue(plan.moves)
+        self.assertFalse([m for m in plan.moves if m.page == 4 or " cube " in m.src_where])
+        w2 = W.load_world(self.saves, GD)
+        for c in w2.characters:
+            self.assertEqual(sorted(_identity(i) for i in c.items if i.mode == 0 and i.page == 4), in_cube[c.path.name],
+                             c.path.name)
+        self.assertNotIn("Warlock", plan.emptied)  # still has items in its cube
+
+    def test_restyle_changes_only_the_picture_then_undo(self):
+        before = self._snapshot()
+        w = W.load_world(self.saves, GD)
+        picks = [(c, i, it) for c in w.characters for i, it in enumerate(c.items) if planner.skinnable(it, GD)]
+        self.assertGreaterEqual(len(picks), 2, "the fixtures need two rings, amulets, charms or jewels with a picture")
+        chosen = [picks[0], picks[-1]]
+        want = [(it.gfx + 1) % GD.items[it.code].pictures for _, _, it in chosen]
+        keys = [planner.item_key(c.path.name, "items", it) for c, _, it in chosen]
+        fingerprint = lambda x: (x.stats, x.prefixes, x.suffixes, x.ilvl, x.quality, x.x, x.y, x.page, x.code)
+        plan = planner.plan_restyles(w, list(zip(keys, want)))
+        self.assertEqual(len(plan.restyles), 2)
+        res = A.apply_plan(w, plan, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertEqual(len(res["restyled"]), 2)
+        w2 = W.load_world(self.saves, GD)
+        for (c, i, it), gfx in zip(chosen, want):
+            got = next(x for x in w2.characters if x.path.name == c.path.name).items[i]
+            self.assertEqual(got.gfx, gfx)
+            self.assertEqual(fingerprint(got), fingerprint(it))  # stats, affixes, level, place: all untouched
+            self.assertEqual(len(got.raw), len(it.raw))
+            changed = [n for n, (a, b) in enumerate(zip(got.raw, it.raw)) if a != b]
+            self.assertTrue(changed and all(it.gfx_bit // 8 <= n <= (it.gfx_bit + 2) // 8 for n in changed), changed)
+            with self.assertRaises(ValueError):  # it already shows that picture now
+                planner.plan_restyles(w2, [(planner.item_key(c.path.name, "items", got), gfx)])
+        A.undo_apply(res["log"], self.saves, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_restyle_refuses_what_has_no_picture_choice(self):
+        w = W.load_world(self.saves, GD)
+        for ch in w.characters:
+            for it in ch.items:
+                if it.mode == 0 and (not planner.skinnable(it, GD)):
+                    key = planner.item_key(ch.path.name, "items", it)
+                    with self.assertRaises(ValueError):
+                        planner.plan_restyles(w, [(key, 0)])
+                    return
+        self.fail("no unskinnable item in the fixtures")
+
+    def test_restyle_range_is_checked(self):
+        w = W.load_world(self.saves, GD)
+        ch, it = next((c, i) for c in w.characters for i in c.items if planner.skinnable(i, GD))
+        with self.assertRaises(ValueError):
+            planner.plan_restyles(w, [(planner.item_key(ch.path.name, "items", it), GD.items[it.code].pictures)])
+
     def test_personal_stash_goes_to_mules(self):
         w = W.load_world(self.saves, GD)
         sorc = w.character("Sorceress")

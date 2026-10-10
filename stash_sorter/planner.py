@@ -26,6 +26,7 @@ from .world import mule_status
 DEFAULT_GRIDS = {PAGE_STASH: (10, 10), PAGE_INVENTORY: (10, 4), PAGE_CUBE: (3, 4)}
 STASH_TAB_GRID = (10, 10)
 PAGE_LABEL = {PAGE_STASH: "stash", PAGE_INVENTORY: "inventory", PAGE_CUBE: "cube"}
+MULE_PAGES = (PAGE_STASH, PAGE_INVENTORY)  # a mule's storage; its cube and whatever is in it are left alone
 STACK_MAX = 99
 MODES = ("stash", "tidy", "reorganize", "migrate")
 
@@ -145,6 +146,17 @@ class Rename:
 
 
 @dataclass
+class Restyle:
+    key: str
+    name: str
+    file: str
+    where: str
+    old: int
+    new: int
+    item: object = field(repr=False, default=None)
+
+
+@dataclass
 class NewMule:
     name: str
     template: str  # file name of the character it is cloned from (without items)
@@ -190,6 +202,7 @@ class Plan:
     renames: list = field(default_factory=list)
     new_mules: list = field(default_factory=list)
     deletions: list = field(default_factory=list)      # Deletion: items to delete
+    restyles: list = field(default_factory=list)       # Restyle: items that get another inventory picture
     delete_chars: list = field(default_factory=list)   # CharDeletion: empty mules to delete
     unplaced: list = field(default_factory=list)  # PoolItem (stash items with no room)
     left_in_place: int = 0                        # tidy: misplaced mule items with nowhere better to go
@@ -203,7 +216,7 @@ class Plan:
     @property
     def is_empty(self):
         return not (self.moves or self.merges or self.renames or self.new_mules or self.deletions
-                    or self.delete_chars)
+                    or self.delete_chars or self.restyles)
 
 
 class _Container:
@@ -221,12 +234,11 @@ class _Container:
         self.claimed = False
         self.claim_order = 0
         self.items_before = 0
+        self.stored_elsewhere = 0  # stored items it keeps outside its storage pages (in its cube)
 
     @classmethod
     def for_character(cls, gd, ch, new=False):
-        has_cube = any(i.code == "box" for i in ch.items)
-        pages = [p for p in (PAGE_STASH, PAGE_INVENTORY, PAGE_CUBE) if p != PAGE_CUBE or has_cube]
-        return cls(gd, ch.name, ch.path.name, {p: Grid(*DEFAULT_GRIDS[p]) for p in pages}, ch=ch, new=new)
+        return cls(gd, ch.name, ch.path.name, {p: Grid(*DEFAULT_GRIDS[p]) for p in MULE_PAGES}, ch=ch, new=new)
 
     def add(self, it, page, x, y, category, fixed=False):
         w, h = C.item_size(it, self.gd)
@@ -297,7 +309,7 @@ def item_key(file_name, container, it):
     like "keep in the stash" survives sorting; moving the item itself in game changes it."""
     if container == "items":
         container = f"c{it.mode}.{it.page}.{it.equipped}"
-    return f"{file_name}|{container}|{it.x},{it.y}|{hashlib.blake2b(identity(it), digest_size=5).hexdigest()}"
+    return f"{file_name}|{container}|{it.x},{it.y}|{hashlib.blake2b(identity(it, keep_gfx=False), digest_size=5).hexdigest()}"
 
 
 def is_mule_candidate(ch, opts):
@@ -420,6 +432,7 @@ class _Planner:
                     m.add(it, it.page, it.x, it.y, cat, fixed)
                 else:
                     m.add_carry(it)
+                    m.stored_elsewhere += it.mode == MODE_STORED
 
     # ---------- stacking into the Stackables tab
     def plan_stacking(self):
@@ -771,7 +784,7 @@ class _Planner:
             used, total = m.cells()
             self.plan.mules.append(MulePlan(m.name, m.file, m.category or m.dominant() or "", m.claimed,
                                             m.items_before, len(m.contents), used, total, new=m.new))
-            if m.ch is not None and m.items_before and not m.held and not self.opts.limit:
+            if m.ch is not None and m.items_before and not m.held and not m.stored_elsewhere and not self.opts.limit:
                 self.plan.emptied.append(m.name)
                 self.plan.emptied_files.append(m.file)
 
@@ -815,6 +828,41 @@ def plan_item_deletions(world, keys, stash_file=None):
         if problem:
             raise ValueError(f"{C.display_name(it, world.gd, world.names)}: {problem}")
         plan.deletions.append(Deletion(key, C.display_name(it, world.gd, world.names), owner.path.name, where, item=it))
+    return plan
+
+
+def skinnable(item, gd):
+    """Does this item show one of several stored inventory pictures (rings, amulets, charms, jewels)?
+    Unique and set items take their art from the game's tables, whatever picture the save holds."""
+    base = gd.items.get(item.code)
+    return bool(base and base.pictures and item.gfx_bit is not None and item.unique_id is None
+                and item.set_id is None)
+
+
+def plan_restyles(world, changes):
+    """A plan that gives items another inventory picture. changes: [(item key, picture number 0..)].
+    Only that 3-bit field changes: stats, affixes and sockets are untouched. Items already showing it are skipped."""
+    plan = Plan(options=Options(mode="restyle"), stash_file="")
+    seen = set()
+    for key, gfx in changes:
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            it, owner, where, _ = find_item(world, key)
+        except KeyError as e:
+            raise ValueError(f"item not found: {e.args[0]}") from None
+        name = C.display_name(it, world.gd, world.names)
+        base = world.gd.items.get(it.code)
+        if not skinnable(it, world.gd):
+            raise ValueError(f"{name}: unique and set items (and anything without picture variants) can't be restyled")
+        gfx = int(gfx)
+        if not 0 <= gfx < base.pictures:
+            raise ValueError(f"{name}: {base.name} has pictures 1 to {base.pictures}")
+        if gfx != it.gfx:
+            plan.restyles.append(Restyle(key, name, owner.path.name, where, it.gfx, gfx, item=it))
+    if not plan.restyles:
+        raise ValueError("Those items already show that picture.")
     return plan
 
 

@@ -267,10 +267,12 @@ def cmd_launch(args):
 
 
 SEED_RUN_SAY = {
-    "wait_closed": "Close D2R and quit Battle.net completely (right-click its icon next to the clock, then Exit).",
+    "wait_closed": "Close D2R first (Save & Exit, then quit the game); Battle.net is closed for you.",
     "starting": "Battle.net is starting D2R with the seed (log in if it asks)...",
-    "playing": "D2R is running with the seed: load the character, enter a game, then Save & Exit and close D2R.",
-    "wait_closed_after": "Now quit Battle.net completely again so the seed can come off.",
+    "playing": "D2R is running with the seed: load the character and create a game. That's all; "
+               "D2R is closed for you once the seed is in the character's map.",
+    "closing": "The seed is in: closing D2R...",
+    "wait_closed_after": "Closing Battle.net so the seed can come off...",
 }
 
 
@@ -394,8 +396,8 @@ def cmd_build_gamedata(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="stash-sorter", description="Empty and organise your D2R shared stash across mules.")
-    ap.add_argument("--version", action="version", version=f"Stash Sorter {__version__}")
+    ap = argparse.ArgumentParser(prog="horadric-toolkit", description="An all-purpose Diablo II: Resurrected toolkit: sort stashes onto mules, find items, restyle charms and rings, track sessions, hunt map seeds and more.")
+    ap.add_argument("--version", action="version", version=f"Horadric Toolkit {__version__}")
     ap.add_argument("--saves", help="save folder (default: auto-detect Saved Games/Diablo II Resurrected)")
     ap.add_argument("--install", help="D2R install folder, used to read extracted game tables (default: auto-detect)")
     ap.add_argument("--data-dir", help="folder with extracted data/global/excel tables (e.g. for a mod)")

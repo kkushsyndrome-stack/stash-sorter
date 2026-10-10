@@ -10,7 +10,7 @@ Horadric Loot Box parser (github.com/pyrosplat/Horadric-Loot-Box).
 
 from dataclasses import dataclass, field
 
-from .bits import BitReader, get_bits, set_bits
+from .bits import BitReader, set_bits
 
 # Item code alphabet, Huffman-coded since D2R 1.0 (save version 0x61).
 _HUFFMAN_TREE = [[[[["w", "u"], [["8", ["y", ["5", ["j", []]]]], "h"]], ["s", [["2", "n"], "x"]]],
@@ -40,11 +40,14 @@ POS_PAGE = 50       # 3 bits
 MODE_STORED, MODE_EQUIPPED, MODE_BELT, MODE_GROUND, MODE_CURSOR, MODE_DROPPING, MODE_SOCKETED = range(7)
 
 
-def identity(it):
-    """An item's bytes with location bits cleared: must be identical before and after a move."""
+def identity(it, keep_gfx=True):
+    """An item's bytes with location bits cleared: must be identical before and after a move. keep_gfx=False also
+    clears the picture variant, for names that should survive an appearance change."""
     raw = bytearray(it.raw)
     for pos, n in ((POS_MODE, 3), (POS_EQUIPPED, 4), (POS_X, 4), (POS_Y, 4), (POS_PAGE, 3)):
         set_bits(raw, pos, n, 0)
+    if not keep_gfx and it.gfx_bit is not None:
+        set_bits(raw, it.gfx_bit, 3, 0)
     return bytes(raw) + b"".join(c.to_bytes() for c in it.children)
 # page field as stored in the file
 PAGE_NONE, PAGE_INVENTORY, PAGE_CUBE, PAGE_STASH = 0, 1, 4, 5
@@ -81,6 +84,7 @@ class Item:
     item_id: int = None
     id_bit: int = None  # bit offset of the 32-bit item id inside raw (extended items)
     gfx: int = None  # picture variant (rings, amulets, charms, jewels)
+    gfx_bit: int = None  # bit offset of that 3-bit field inside raw (present when the item has a picture variant)
     ilvl: int = 0
     quality: int = 2
     unique_id: int = None
@@ -134,6 +138,15 @@ class Item:
         set_bits(self.raw, POS_Y, 4, y)
         set_bits(self.raw, POS_PAGE, 3, page)
         self.mode, self.equipped, self.x, self.y, self.page = mode, equipped, x, y, page
+
+    def set_gfx(self, n):
+        """Pick another inventory picture for an item that already stores one. Same length, nothing else changes."""
+        if self.gfx_bit is None:
+            raise ValueError(f"{self.code} doesn't store a picture variant")
+        if not 0 <= n <= 7:
+            raise ValueError(f"picture {n} is out of range")
+        set_bits(self.raw, self.gfx_bit, 3, n)
+        self.gfx = n
 
     def set_stack_count(self, n):
         if self.stack_count is None or self.stack_flag_bit is None:
@@ -268,6 +281,7 @@ def _read_complete(r, it, base, version, char_bits, gd, start_bit):
     it.ilvl = r.read(7)
     it.quality = q = r.read(4)
     if r.read(1):  # alternate graphic
+        it.gfx_bit = r.pos - start_bit
         it.gfx = r.read(3)
     if r.read(1):  # class-specific auto affix
         r.read(11)
@@ -367,8 +381,3 @@ def write_item_list(items):
     for it in items:
         out += it.to_bytes()
     return bytes(out)
-
-
-def location_of(raw):
-    return (get_bits(raw, POS_MODE, 3), get_bits(raw, POS_PAGE, 3),
-            get_bits(raw, POS_X, 4), get_bits(raw, POS_Y, 4))

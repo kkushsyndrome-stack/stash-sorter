@@ -1,9 +1,9 @@
-"""Build a standalone StashSorter.exe (no Python needed to run it).
+"""Build a standalone HoradricToolkit.exe (no Python needed to run it).
 
     python tools/build_exe.py
 
 Creates an isolated build environment in .venv-build/, installs PyInstaller there (nothing is installed into your
-normal Python), and writes dist/StashSorter.exe.
+normal Python), and writes dist/HoradricToolkit.exe.
 """
 
 import os
@@ -29,13 +29,13 @@ def main():
     sep = ";" if os.name == "nt" else ":"
     data = [("stash_sorter/web", "stash_sorter/web"), ("stash_sorter/data", "stash_sorter/data"),
             ("stash_sorter/default_rules.json", "stash_sorter")]
-    args = [PY, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--console", "--name", "StashSorter",
+    args = [PY, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--console", "--name", "HoradricToolkit",
             "--distpath", ROOT / "dist", "--workpath", VENV / "work", "--specpath", VENV]
     for src, dst in data:
         args += ["--add-data", f"{ROOT / src}{sep}{dst}"]
     args.append(ROOT / "tools" / "exe_entry.py")
     run(*args)
-    print(f"\nBuilt {ROOT / 'dist' / 'StashSorter.exe'}")
+    print(f"\nBuilt {ROOT / 'dist' / 'HoradricToolkit.exe'}")
 
 
 if __name__ == "__main__":

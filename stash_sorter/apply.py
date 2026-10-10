@@ -269,6 +269,20 @@ class _Change:
                         return
         raise ApplyError("an item in the plan no longer exists")
 
+    def _restyle(self, item, gfx):
+        for ch in self.world.characters:
+            for i, it in enumerate(ch.items):
+                if it is item:
+                    self._char_copy(ch).items[i].set_gfx(gfx)
+                    return
+        for st in self.world.stashes:
+            for ti, t in enumerate(st.tabs):
+                for i, it in enumerate(t.items):
+                    if it is item:
+                        self._stash_copy(st).tabs[ti].items[i].set_gfx(gfx)
+                        return
+        raise ApplyError("an item in the plan no longer exists")
+
     def build(self):
         w, plan = self.world, self.plan
         for nm in plan.new_mules:
@@ -288,6 +302,8 @@ class _Change:
                 raise ApplyError(f"{d.name} is not empty any more: {reason}")
         for m in plan.moves + plan.merges + plan.deletions:
             self._remove(m.item)
+        for r in plan.restyles:
+            self._restyle(r.item, r.new)
         for m in plan.moves:
             it = _clone(m.item)
             if m.dst_tab is not None:
@@ -417,6 +433,11 @@ class _Change:
             before_stacks[m.code] += 1
         for d in plan.deletions:  # deleted on purpose: they must be gone, and nothing else
             before_ids[_identity(d.item)] -= 1
+        for r in plan.restyles:  # restyled on purpose: the item must be back with the new picture and nothing else
+            twin = _clone(r.item)
+            twin.set_gfx(r.new)
+            before_ids[_identity(r.item)] -= 1
+            before_ids[_identity(twin)] += 1
         if +before_ids != +after_ids:
             lost = sum((before_ids - after_ids).values())
             gained = sum((after_ids - before_ids).values())
@@ -462,6 +483,7 @@ def apply_plan(world, plan, backup_root, log=print, skip_game_check=False):
         "new_mules": [{"name": n.name, "template": n.template} for n in plan.new_mules],
         "deleted_items": [{"item": d.name, "from": d.where} for d in plan.deletions],
         "deleted_mules": [d.name for d in plan.delete_chars],
+        "restyled": [{"item": r.name, "from": r.where, "old": r.old + 1, "new": r.new + 1} for r in plan.restyles],
         "files_before": sorted(existed),
         "files_after": after,
         "written": {Path(p).name: _sha(d) for p, d in writes.items()},
@@ -470,8 +492,8 @@ def apply_plan(world, plan, backup_root, log=print, skip_game_check=False):
     log_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     summary["log"] = str(log_path)
     log(f"Done: {len(plan.moves)} moved, {len(plan.merges)} stacked, {len(plan.renames)} renamed, "
-        f"{len(plan.new_mules)} new mule(s), {len(plan.deletions)} item(s) and {len(plan.delete_chars)} mule(s) "
-        "deleted.")
+        f"{len(plan.new_mules)} new mule(s), {len(plan.restyles)} restyled, {len(plan.deletions)} item(s) and "
+        f"{len(plan.delete_chars)} mule(s) deleted.")
     return summary
 
 

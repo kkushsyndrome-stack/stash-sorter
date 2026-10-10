@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -72,6 +73,32 @@ def running_processes():
 
 def battlenet_running():
     return BATTLENET_PROCESS in running_processes()
+
+
+def close_program(image, force=False):
+    """Ask a program to close, like clicking its X (force=False), or end it as Task Manager does (force=True)."""
+    if sys.platform != "win32":
+        raise LaunchError("Closing programs is only supported on Windows.")
+    args = ["taskkill", "/IM", image] + (["/T", "/F"] if force else [])
+    try:
+        subprocess.run(args, capture_output=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError) as e:
+        raise LaunchError(f"Couldn't close {image}: {e}") from None
+
+
+def map_seeds(path):
+    """Map seeds in a character's .map file, newest first. D2R keeps the last four offline map seeds there:
+    a 12, the slot the next seed goes in, then four slots."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return []
+    if len(data) != 24:
+        return []
+    head, nxt, *slots = struct.unpack("<6I", data)
+    if head != 12 or nxt > 3:
+        return [s for s in slots if s]
+    return [s for s in (slots[(nxt - 1 - i) % 4] for i in range(4)) if s]
 
 
 # ---------------------------------------------------------------------------------------------- arguments
@@ -340,12 +367,16 @@ STAGES = {
     "wait_closed": "Close Battle.net so the seed can be put in",
     "starting": "Starting D2R with the seed",
     "playing": "Play one game with the seed",
+    "closing": "The seed is in: closing D2R",
     "wait_closed_after": "Close Battle.net so the seed can be taken off",
     "done": "Finished",
     "cancelled": "Cancelled",
 }
 FINAL = ("done", "cancelled")
 GIVE_UP_STARTING = 90  # seconds after launching with neither Battle.net nor D2R running: it was closed
+SETTLE = 6             # seconds to leave D2R after the seed shows up (and after its last save) before closing it
+FORCE_AFTER = 20       # seconds to wait for D2R to close normally before ending it
+GAME_EXE, BATTLENET_EXE = "D2R.exe", "Battle.net.exe"
 
 
 class SeedRun:
@@ -354,13 +385,18 @@ class SeedRun:
     stays because offline characters keep their map.
 
     Battle.net only reads its settings when it starts and writes its own copy back when it exits, so it has to be
-    fully closed before each change: wait_closed -> starting -> playing -> wait_closed_after -> done.
+    fully closed before each change: wait_closed -> starting -> playing -> closing -> wait_closed_after -> done.
     tick() looks at what is running and moves on. The run is kept in a file, so one that didn't finish (app closed,
     PC restarted) carries on the next time and -seed is never left behind.
+
+    auto (the default) does the closing too: it ends Battle.net when its settings need changing (closing its window
+    only hides it, and an ended Battle.net doesn't write its settings back), notices when the seed reaches a
+    character's .map file (D2R writes it when the game is created), closes D2R, takes -seed off and starts D2R again.
+    The only thing left to do is load the character and create a game. D2R is never closed before the seed is in.
     """
 
     def __init__(self, path, saves_dir=None, processes=running_processes, config=None, launch=None,
-                 backup_dir=None, now=time.time):
+                 backup_dir=None, now=time.time, closer=close_program, auto=True):
         self.path = Path(path)
         self.saves_dir = Path(saves_dir) if saves_dir else None
         self.processes = processes
@@ -368,6 +404,8 @@ class SeedRun:
         self.launch = launch or launch_d2r
         self.backup_dir = backup_dir
         self.now = now
+        self.closer = closer
+        self.auto = auto
         self.state = None
         if self.path.is_file():
             try:
@@ -395,10 +433,37 @@ class SeedRun:
             self.state["notes"].append(note)
         self._save()
 
-    def _snapshot(self):
+    def _snapshot(self, pattern="*.d2s"):
         if not self.saves_dir or not self.saves_dir.is_dir():
             return {}
-        return {p.stem: p.stat().st_mtime_ns for p in self.saves_dir.glob("*.d2s")}
+        return {p.stem: p.stat().st_mtime_ns for p in self.saves_dir.glob(pattern)}
+
+    def _seed_taken(self):
+        """The character whose .map file changed since D2R started and now has the seed as its newest map."""
+        before = self.state.get("map_snapshot") or {}
+        for stem, mtime in self._snapshot("*.map").items():
+            if before.get(stem) != mtime and map_seeds(self.saves_dir / f"{stem}.map")[:1] == [self.state["seed"]]:
+                return stem
+        return None
+
+    def _settled(self):
+        """Long enough since the seed showed up, and the character's save hasn't been written for a few seconds."""
+        st = self.state
+        if self.now() - st["seen_at"] < SETTLE:
+            return False
+        save = self.saves_dir / f"{st['taken_by']}.d2s"
+        try:
+            return time.time() - save.stat().st_mtime >= SETTLE
+        except OSError:
+            return True
+
+    def _end(self, image, force, note):
+        try:
+            self.closer(image, force=force)
+            self.state["notes"].append(note)
+        except LaunchError as e:
+            self.state["error"] = str(e)
+        self._save()
 
     def start(self, seed, seed_id=None):
         if self.active:
@@ -415,9 +480,15 @@ class SeedRun:
         if "-resetofflinemaps" in base.lower().split():
             raise LaunchError("Untick -resetofflinemaps and save first: with it the game makes a new map every game, "
                               "so the seeded map wouldn't stay.")
+        notes = []
+        if self.auto and self.saves_dir and self.backup_dir:
+            from .apply import backup_save_dir  # the run closes D2R by itself: keep a copy of the saves first
+            notes.append(f"Saves backed up to {backup_save_dir(self.saves_dir, self.backup_dir, label='before-seed-run').name}")
         self.state = {"seed": seed, "seed_id": seed_id, "base": base, "seeded": f"{base} -seed {seed}".strip(),
                       "relaunch": True, "stage": "wait_closed", "started": self.now(), "since": self.now(),
-                      "launched": None, "snapshot": {}, "changed": None, "error": None, "notes": []}
+                      "launched": None, "snapshot": {}, "map_snapshot": {}, "changed": None, "taken_by": None,
+                      "seen_at": None, "close_sent": None, "forced": False, "auto": self.auto, "error": None,
+                      "notes": notes}
         self._save()
         return self.tick()
 
@@ -429,9 +500,14 @@ class SeedRun:
         try:
             running = self.processes()
             bnet, game = BATTLENET_PROCESS in running, GAME_PROCESS in running
+            auto = st.get("auto", False) and self.auto
+            if st["stage"] == "wait_closed" and bnet and not game and auto:
+                self._end(BATTLENET_EXE, True, "Battle.net closed so the seed can be put in.")
+                bnet = BATTLENET_PROCESS in self.processes()
             if st["stage"] == "wait_closed" and not bnet and not game:
                 write_args(st["seeded"], self._backups(), path=self.config, check_running=False)
                 st["snapshot"] = self._snapshot()
+                st["map_snapshot"] = self._snapshot("*.map")
                 st["launched"] = self.now()
                 self._stage("starting", f"Battle.net now starts D2R with: {st['seeded']}")
                 self._launch()
@@ -441,10 +517,32 @@ class SeedRun:
                 elif not bnet and self.now() - st["launched"] > GIVE_UP_STARTING:
                     st["relaunch"] = False
                     self._stage("wait_closed_after", "Battle.net closed before D2R started.")
-            if st["stage"] == "playing" and not game:
+            if st["stage"] == "playing" and auto and game and not st.get("taken_by"):
+                taken = self._seed_taken()
+                if taken:
+                    st["taken_by"], st["seen_at"] = taken, self.now()
+                    self._stage("closing", f"Seed {st['seed']} is in {taken}'s map.")
+            if st["stage"] == "closing" and game:
+                if st["close_sent"] is None:
+                    if self._settled():
+                        st["close_sent"] = self.now()
+                        self._end(GAME_EXE, False, "Closing D2R.")
+                elif not st["forced"] and self.now() - st["close_sent"] > FORCE_AFTER:
+                    st["forced"] = True
+                    self._end(GAME_EXE, True, "D2R didn't close by itself: ended it.")
+            if st["stage"] in ("playing", "closing") and not game:
                 before = st["snapshot"]
                 st["changed"] = sorted(n for n, m in self._snapshot().items() if before.get(n) != m)
-                self._stage("wait_closed_after")
+                if auto and not st.get("taken_by") and self._seed_taken():
+                    st["taken_by"] = self._seed_taken()
+                if auto and not st.get("taken_by"):
+                    st["relaunch"] = False
+                    self._stage("wait_closed_after", "D2R closed before a game was created, so the seed didn't take.")
+                else:
+                    self._stage("wait_closed_after")
+                bnet = BATTLENET_PROCESS in self.processes()
+            if st["stage"] == "wait_closed_after" and bnet and not game and auto:
+                self._end(BATTLENET_EXE, True, "Battle.net closed so the seed can be taken off.")
                 bnet = BATTLENET_PROCESS in self.processes()
             if st["stage"] == "wait_closed_after" and not bnet and not game:
                 write_args(st["base"], self._backups(), path=self.config, check_running=False)
@@ -501,5 +599,5 @@ class SeedRun:
     def view(self):
         if not self.state:
             return None
-        return {**{k: v for k, v in self.state.items() if k != "snapshot"}, "active": self.active,
+        return {**{k: v for k, v in self.state.items() if k not in ("snapshot", "map_snapshot")}, "active": self.active,
                 "title": STAGES[self.state["stage"]], "elapsed": int(self.now() - self.state["since"])}

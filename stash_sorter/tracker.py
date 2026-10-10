@@ -166,7 +166,7 @@ class Tracker:
             if not s.get("ended"):
                 self.session = s
                 s.setdefault("notes", []).append(
-                    f"{self._now()}: resumed after Stash Sorter was closed; games played meanwhile aren't counted.")
+                    f"{self._now()}: resumed after Horadric Toolkit was closed; games played meanwhile aren't counted.")
                 self._baseline()
                 self._save()
                 return

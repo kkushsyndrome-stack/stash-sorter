@@ -7,7 +7,8 @@ from typing import NamedTuple
 
 from . import catalog as C
 from . import gamedata, planner, paths, apply as applier
-from .art import ArtIndex
+from .art import ArtIndex, norm
+from .artmod import ArtMod, ART_FILES
 from .describe import Describer
 from .items import MODE_STORED, MODE_EQUIPPED, MODE_BELT, PAGE_INVENTORY, PAGE_STASH, PAGE_CUBE
 from .rules import Ruleset, load_default_rules, validate, RulesError
@@ -49,6 +50,9 @@ class Session:
         self.backup_dir = Path(backups) if backups else paths.backups_dir()
         self.rules_path = Path(rules_path) if rules_path else paths.rules_file()
         self.art = ArtIndex(self.gd, paths.cache_dir() / "art", install)
+        root = gamedata.find_install_dir(install)
+        self.artmod = ArtMod(root / "Data" if root else None, paths.app_dir() / "artmod",
+                             game_running=applier.game_running)
         self.crafter_level = 99
         self.plan = None
         self.plan_id = 0
@@ -114,6 +118,7 @@ class Session:
             "socketed": [C.display_name(c, gd, names) for c in it.children],
             "stack": it.stack_count, "quantity": it.quantity, "where": where,
             "tier": base.tier if base else "", "assess": a, "stats": lines, "art": art,
+            "gfx": it.gfx, "skinnable": planner.skinnable(it, gd),
         }
 
     def state(self):
@@ -126,7 +131,7 @@ class Session:
             ok = usable and planner.is_mule_candidate(c, planner.Options())
             if usable and not ok:
                 reason = f"level {c.level}"
-            stored = [i for i in c.items if i.mode == MODE_STORED and i.page in GRID_PAGES]
+            stored = [i for i in c.items if i.mode == MODE_STORED and i.page in planner.MULE_PAGES]  # 140 cells
             cats = [rs.categorize(i) for i in stored]
             top = max(set(cats), key=cats.count) if cats else ""
             chars.append({
@@ -151,6 +156,7 @@ class Session:
                         for s in w.stashes],
             "characters": chars, "errors": w.errors, "categories": rs.labels(), "category_order": rs.order,
             "max_level": self.max_char_level(), "crafter_level": self.crafter_level,
+            "variants": self.variants(),
         }
 
     def mule_defaults(self, level=1, hint=True):
@@ -187,8 +193,20 @@ class Session:
         items = []
         for it in c.items:
             items.append(self.item_json(it, _where(it), planner.item_key(c.path.name, "items", it), rs=rs))
+        for j in items:
+            j["owner"] = c.name
         return {"name": c.name, "class": c.class_name, "level": c.level, "items": items, "gold": c.gold,
                 "has_cube": any(i.code == "box" for i in c.items)}
+
+    def variants(self):
+        """{base code: {name, art: [artwork key for each picture]}} for items whose picture the save stores."""
+        out = {}
+        for code, b in self.gd.items.items():
+            if b.pictures and not b.quest:
+                art = [self.art.key_for(code, None, None, n, b.tier) if self.art.available else None
+                       for n in range(b.pictures)]
+                out[code] = {"name": b.name, "art": art}
+        return out
 
     def walk(self, stacks=False):
         """Every top-level item in every save, as `Found` (Stackables-tab stacks only when `stacks`)."""
@@ -354,7 +372,7 @@ class Session:
                                       for it in st.tabs[int(tab) - 1].items]
         files = ({m.dst_file for m in p.moves} | {m.src_file for m in p.moves} | {m.src_file for m in p.merges}
                  | ({p.stash_file} if p.merges else set()) | {d.file for d in p.deletions}
-                 | {d.file for d in p.delete_chars})
+                 | {d.file for d in p.delete_chars} | {r.file for r in p.restyles})
         return {
             "id": self.plan_id, "stash": p.stash_file, "mode": p.options.mode, "existing": existing,
             "moves": len(p.moves), "by_dest": by_dest, "notes": p.notes, "left_in_place": p.left_in_place,
@@ -363,6 +381,7 @@ class Session:
             "renames": [{"old": r.old, "new": r.new, "category": r.category} for r in p.renames],
             "new_mules": [{"name": n.name, "template": n.template, "category": n.category} for n in p.new_mules],
             "deletions": [{"name": d.name, "where": d.where, "key": d.key} for d in p.deletions],
+            "restyles": [{"name": r.name, "where": r.where, "old": r.old + 1, "new": r.new + 1} for r in p.restyles],
             "delete_chars": [{"name": d.name, "file": d.file, "level": d.level} for d in p.delete_chars],
             "emptied": p.emptied,
             "unplaced": [{"name": u.name, "category": u.category, "from": u.src_where} for u in p.unplaced],
@@ -430,7 +449,7 @@ class Session:
         return self.tz_state()
 
     def revert_clock_on_exit(self):
-        """Called when Stash Sorter closes: put the real time back if the user asked for that."""
+        """Called when Horadric Toolkit closes: put the real time back if the user asked for that."""
         c = self.clock
         if c.shifted and c.settings.get("auto_revert", True):
             try:
@@ -537,6 +556,80 @@ class Session:
         self.seed_run.dismiss()
         return self.seedrun_state()
 
+    # ---------- art mod: item pictures and body-armour looks, by editing the extracted game files
+    def _reload_art(self):
+        self.art = ArtIndex(self.gd, paths.cache_dir() / "art", self.install)
+
+    def artmod_state(self):
+        am, gd, art = self.artmod, self.gd, self.art
+        out = {"available": am.available, "data_dir": str(am.data_dir or ""), "game_running": applier.game_running(),
+               "changes": [], "items": [], "looks": [], "sprites": []}
+        if not am.available:
+            return out
+        keys = {kind: am.art_keys(kind) for kind in ART_FILES}
+        changes = am.changes()
+        changed = {(c["kind"], c["key"]) for c in changes}
+
+        def row(kind, name, base, idx, art_key):
+            key = am.find_key(kind, idx, keys[kind])
+            exists = key is not None
+            key = key or norm(idx)
+            return {"kind": kind, "key": key, "name": name, "base": base, "art": art_key, "exists": exists,
+                    "changed": (kind, key) in changed}
+
+        for r in gd.tables["uniqueitems"]:
+            if r.get("*ID", "") == "" or r.get("disabled") == "1" or not r.get("code"):
+                continue
+            uid = int(r["*ID"])
+            b = gd.items.get(r["code"])
+            out["items"].append(row("unique", gd.uniques[uid][0], b.name if b else r["code"], gd.uniques[uid][3],
+                                    art.key_for(r["code"], uid, None, None, b.tier if b else None)))
+        for r in gd.tables["setitems"]:
+            if r.get("*ID", "") == "" or r.get("disabled") == "1":
+                continue
+            sid = int(r["*ID"])
+            b = gd.items.get(r.get("item", ""))
+            out["items"].append(row("set", gd.set_items[sid][0], b.name if b else r.get("item", ""),
+                                    gd.set_items[sid][3], art.key_for(r.get("item", ""), None, sid, None,
+                                                                      b.tier if b else None)))
+        for code, b in gd.items.items():
+            if code in keys["base"]:
+                out["items"].append({"kind": "base", "key": code, "name": b.name, "base": f"{b.tier} {b.type}".strip(),
+                                     "art": art.key_for(code, None, None, None, b.tier), "exists": True,
+                                     "changed": ("base", code) in changed})
+        for key in sorted(art.sprites):
+            root, _, rest = key.partition("/")
+            if root in ("armor", "weapon", "misc") and rest:
+                out["sprites"].append({"key": key, "value": rest, "group": rest.rsplit("/", 1)[0] if "/" in rest else root,
+                                       "name": rest.rsplit("/", 1)[-1]})
+        out["changes"], out["looks"] = changes, am.looks()
+        return out
+
+    def _artmod(self, fn, *args):
+        fn(*args)
+        self._reload_art()
+        return self.artmod_state()
+
+    def artmod_set_art(self, body):
+        return self._artmod(self.artmod.set_art, body.get("kind"), body.get("key"), body.get("sprite"))
+
+    def artmod_reset_art(self, body):
+        return self._artmod(self.artmod.reset_art, body.get("kind"), body.get("key"))
+
+    def artmod_set_look(self, body):
+        return self._artmod(self.artmod.set_look, body.get("armor"), body.get("like"))
+
+    def artmod_reset_look(self, body):
+        return self._artmod(self.artmod.reset_look, body.get("armor"))
+
+    def artmod_restore(self, body):
+        done = []
+        state = self._artmod(lambda: done.extend(self.artmod.restore_all(bool(body.get("force")))))
+        return {**state, "restored": done}
+
+    def artmod_forget(self):
+        return self._artmod(self.artmod.forget)
+
     # ---------- session tracker
     def _describe_found(self, it):
         j = self.item_json(it, "")
@@ -612,6 +705,11 @@ class Session:
 
     def plan_delete_mules(self, names):
         self.plan = planner.plan_mule_deletions(self.world, names)
+        self.plan_id += 1
+        return self.plan_json()
+
+    def plan_restyle(self, changes):
+        self.plan = planner.plan_restyles(self.world, [(c["key"], c["gfx"]) for c in changes])
         self.plan_id += 1
         return self.plan_json()
 

@@ -1,4 +1,4 @@
-"""Where Stash Sorter keeps its own files (never inside the save folder or the game install)."""
+"""Where Horadric Toolkit keeps its own files (never inside the save folder or the game install)."""
 
 import os
 import sys
@@ -10,12 +10,6 @@ def app_dir():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
-
-
-def resource_dir():
-    """Bundled read-only resources (web page, default rules, game data snapshot)."""
-    base = getattr(sys, "_MEIPASS", None)
-    return Path(base) / "stash_sorter" if base else Path(__file__).resolve().parent
 
 
 def backups_dir():

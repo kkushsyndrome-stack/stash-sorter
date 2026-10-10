@@ -3,7 +3,7 @@
 Sources, in order of preference:
   1. an explicit data directory (e.g. a mod's extracted data/global/excel folder),
   2. the extracted tables inside the D2R install (Data/global/excel), found automatically,
-  3. the snapshot bundled with Stash Sorter (stash_sorter/data/gamedata.json.gz).
+  3. the snapshot bundled with Horadric Toolkit (stash_sorter/data/gamedata.json.gz).
 
 Nothing in the install folder is ever written to.
 """
@@ -164,7 +164,7 @@ def load_tables(install_dir=None, data_dir=None, bundled_only=False):
 
 
 def build_bundle(out_path=BUNDLE_PATH, install_dir=None, data_dir=None, game_version=""):
-    """Write a compact snapshot of the tables so Stash Sorter works without extracted game files."""
+    """Write a compact snapshot of the tables so Horadric Toolkit works without extracted game files."""
     excel = find_excel_dir(install_dir, data_dir)
     if excel is None:
         raise FileNotFoundError("Need extracted tables to build a snapshot")

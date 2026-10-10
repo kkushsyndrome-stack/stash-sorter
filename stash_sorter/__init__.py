@@ -1,3 +1,3 @@
-"""Stash Sorter: empty and organise your Diablo II: Resurrected shared stash across mules."""
+"""Horadric Toolkit: empty and organise your Diablo II: Resurrected shared stash across mules."""
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"

@@ -39,6 +39,7 @@ function tipHtml(it) {
     if (a.note) meta += `<br>${esc(a.note)}`;
     if (a.as_is) meta += `<br><b style="color:var(--ok)">${a.as_is === "keep" ? "Worth keeping as-is" : "Maybe worth keeping as-is"}</b>: ${esc(a.as_is_note)}`;
   }
+  if (it._pickable) meta += `<br><span class="muted">Click to change its appearance</span>`;
   if (kept.has(it.key)) meta += `<br><span style="color:var(--accent)">⚑ kept in the stash</span>`;
   return h + `<div class="meta">${meta}</div>`;
 }
@@ -70,6 +71,9 @@ function renderGrid(items, w, h, opts = {}) {
     d.style.width = `calc(var(--cell) * ${it.w} - 1px)`; d.style.height = `calc(var(--cell) * ${it.h} - 1px)`;
     if (it.art && S.art) d.innerHTML = `<img src="${artUrl(it.art)}" alt="" loading="lazy">`;
     else d.textContent = it.w * it.h >= 2 ? (it.ilvl ?? "") : "";
+    if (opts.onpick && it.skinnable) {
+      it._pickable = true; d.classList.add("skinnable"); d.addEventListener("click", () => opts.onpick(it));
+    }
     if (it.name) hoverable(d, it);
     if (opts.keepable) d.addEventListener("click", () => {
       kept.has(it.key) ? kept.delete(it.key) : kept.add(it.key);
@@ -151,12 +155,14 @@ async function showChar(name) {
   v.innerHTML = `<div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(c.name)} <span class="muted small">${esc(c.class)} · level ${c.level}${c.gold ? ` · ${c.gold.toLocaleString()} gold` : ""}${c.has_cube ? " · has Horadric Cube" : ""}</span></h2><button class="btn" id="renameChar">Rename…</button></div>`;
   $("#renameChar").onclick = () => renameDialog(c.name);
   const g = document.createElement("div"); g.className = "grids";
-  for (const page of [5, 1].concat(c.has_cube ? [4] : [])) g.appendChild(gridBox(PAGE[page], c.items.filter(i => i.mode === 0 && i.page === page), page));
+  for (const page of [5, 1].concat(c.has_cube ? [4] : [])) g.appendChild(gridBox(PAGE[page], c.items.filter(i => i.mode === 0 && i.page === page), page, { onpick: skinDialog }));
   v.appendChild(g);
   const eq = c.items.filter(i => i.mode !== 0);
   if (eq.length) {
     const p = document.createElement("p"); p.className = "small muted"; p.style.marginTop = "10px"; p.textContent = "Equipped / belt (never moved): ";
-    eq.forEach((i, n) => { const s = document.createElement("span"); s.className = `q-${i.quality}`; s.textContent = i.name + (n < eq.length - 1 ? ", " : ""); hoverable(s, i); p.appendChild(s); });
+    eq.forEach((i, n) => { const s = document.createElement("span"); s.className = `q-${i.quality}`; s.textContent = i.name + (n < eq.length - 1 ? ", " : "");
+      if (i.skinnable) { i._pickable = true; s.style.cursor = "pointer"; s.onclick = () => skinDialog(i); }
+      hoverable(s, i); p.appendChild(s); });
     v.appendChild(p);
   }
   v.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -189,6 +195,47 @@ function renameDialog(name) {
   };
   $("#mGo").onclick = go;
   input.onkeydown = e => { if (e.key === "Enter") go(); };
+}
+
+// A ring, amulet, charm or jewel can show any of the pictures the game has for it; the save stores which. Only that
+// picture changes: stats, affixes and sockets stay as they are. Unique and set items take their art from the game.
+async function skinDialog(it) {
+  const v = S.variants[it.code];
+  if (!v) return;
+  if (!allItems) allItems = await api("/api/items");
+  const same = allItems.filter(x => x.skinnable && x.code === it.code && x.key);
+  const scopes = [["one", "Just this one", [it]],
+    ["char", `Every ${v.name} on ${it.owner}`, same.filter(x => x.owner === it.owner)],
+    ["all", `Every ${v.name} I have`, same]];
+  modal(`<h2>Appearance · ${esc(it.name)}</h2>
+    <p class="small muted">Only the picture changes. Stats, affixes and sockets stay exactly as they are. Unique and set items aren't listed: their art comes from the game itself.</p>
+    <div class="skins">${v.art.map((k, i) => `<label class="skin"><input type="radio" name="skin" value="${i}" ${i === it.gfx ? "checked" : ""}>
+      ${k && S.art ? `<img src="${artUrl(k, true)}" alt="">` : `<span class="big">${i + 1}</span>`}
+      <span class="small">${i === it.gfx ? "current" : "picture " + (i + 1)}</span></label>`).join("")}</div>
+    <div class="field" style="margin-top:12px"><label>Apply to</label><select id="skScope">${scopes.map(([k, l, list]) =>
+      `<option value="${k}">${esc(l)} (${list.length})</option>`).join("")}</select></div>
+    <div class="notice">Close Diablo II: Resurrected completely first. Your saves are backed up, and <b>Backups → Undo</b> puts the old pictures back.</div>
+    <div id="skErr"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo">Apply</button></div>`);
+  $("#mCancel").onclick = closeModal;
+  $("#mGo").onclick = async () => {
+    const gfx = +document.querySelector("input[name=skin]:checked").value;
+    const list = scopes.find(s => s[0] === $("#skScope").value)[2];
+    const changes = list.filter(x => x.gfx !== gfx).map(x => ({ key: x.key, gfx }));
+    if (!changes.length) { $("#skErr").innerHTML = `<div class="notice">They already show that picture.</div>`; return; }
+    $("#mGo").disabled = true; $("#mGo").textContent = "Applying…"; $("#skErr").innerHTML = "";
+    try {
+      const p = await api("/api/plan_restyle", { changes });
+      const r = await api("/api/apply", { plan_id: p.id });
+      applied(r, `<p class="small">${p.restyles.length} item(s) now show picture ${gfx + 1}.</p>`);
+      allItems = null; grail = null; curPlan = null;
+      await refresh();
+      if (S.characters.some(c => c.name === it.owner)) showChar(it.owner);
+    } catch (e) {
+      $("#skErr").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
+      $("#mGo").disabled = false; $("#mGo").textContent = "Apply";
+    }
+  };
 }
 
 // ---------------------------------------------------------------- shared stash
@@ -251,7 +298,7 @@ function renderPlan() {
     </div>
     ${p.left_in_place ? `<div class="notice">${p.left_in_place} item(s) are on a mule of a different kind but there's no room elsewhere, so they stay put.</div>` : ""}
     ${p.emptied.length ? `<div class="notice ok"><b>${p.emptied.length} mule(s) will be empty afterwards:</b> ${p.emptied.map(esc).join(", ")}. After applying, you can delete them under <b>Clean Up</b> or keep them for later.</div>` : ""}
-    ${p.unplaced.length ? `<div class="notice">Not enough room for ${p.unplaced.length} item(s): ${p.unplaced.slice(0, 12).map(u => esc(u.name)).join(", ")}${p.unplaced.length > 12 ? "…" : ""}. Make a few new level-1 characters (or let Stash Sorter create some) and preview again.</div>` : ""}
+    ${p.unplaced.length ? `<div class="notice">Not enough room for ${p.unplaced.length} item(s): ${p.unplaced.slice(0, 12).map(u => esc(u.name)).join(", ")}${p.unplaced.length > 12 ? "…" : ""}. Make a few new level-1 characters (or let Horadric Toolkit create some) and preview again.</div>` : ""}
     <div class="row" style="margin-top:14px">
       <button class="btn danger" id="applyBtn" ${actions ? "" : "disabled"}>Apply this plan…</button>
       <span class="small muted">${S.game_running ? "⚠ Close Diablo II: Resurrected first." : "A full backup is made first."}</span>
@@ -291,7 +338,7 @@ function confirmApply() {
     p.renames.length && `rename <b>${p.renames.length}</b> mule(s)`, p.new_mules.length && `create <b>${p.new_mules.length}</b> new mule(s)`].filter(Boolean).join(", ");
   modal(`<h2>Apply this plan?</h2><p>This will ${what}.</p>
     <div class="notice">Close Diablo II: Resurrected completely (not just to the menu) first — the game rewrites saves when it exits.</div>
-    <p class="small muted">Stash Sorter zips your whole save folder, checks every rebuilt file (every item accounted for, nothing overlapping), then writes everything as one recoverable change. If any check fails, nothing is written.</p>
+    <p class="small muted">Horadric Toolkit zips your whole save folder, checks every rebuilt file (every item accounted for, nothing overlapping), then writes everything as one recoverable change. If any check fails, nothing is written.</p>
     <div class="row" style="justify-content:flex-end"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo">Apply</button></div>`);
   $("#mCancel").onclick = closeModal;
   $("#mGo").onclick = async () => {
@@ -331,6 +378,11 @@ function renderFind() {
       <div class="stats">${(it.stats || []).slice(0, 4).map(esc).join("<br>")}${(it.stats || []).length > 4 ? "<br>…" : ""}</div></div>`;
     const map = spotMap(it);
     if (map) d.appendChild(map);
+    if (it.skinnable) {
+      const b = document.createElement("button"); b.className = "btn small"; b.textContent = "Appearance…";
+      b.onclick = e => { e.stopPropagation(); skinDialog(it); };
+      d.querySelector(".grow").appendChild(b);
+    }
     hoverable(d, it); out.appendChild(d);
   }
 }
@@ -485,7 +537,7 @@ $("#lnStart").onclick = async () => {
 
 // ---------------------------------------------------------------- seed run
 let srTimer = null;
-const SR_ORDER = ["wait_closed", "starting", "playing", "wait_closed_after", "done"];
+const SR_ORDER = ["wait_closed", "starting", "playing", "closing", "wait_closed_after", "done"];
 async function startSeedRun(body) {
   try {
     const r = await api("/api/seedrun/start", body);
@@ -500,18 +552,39 @@ function renderSeedRun(run) {
   card.style.display = "";
   const at = SR_ORDER.indexOf(run.stage), off = !run.relaunch;
   const mins = s => s < 60 ? `${s}s` : `${Math.floor(s / 60)} min`;
-  const steps = [
+  const auto = !!run.auto;
+  const steps = auto ? [
+    "Battle.net is closed so the seed can go in",
+    `Battle.net starts D2R with <span class="mono">-seed ${run.seed}</span>`,
+    "<b>You:</b> load the character and create a game (offline)",
+    "The seed is in the character's map: D2R is closed",
+    "Battle.net is closed and the seed comes off",
+    "D2R starts normally, without the seed"] : [
     "Close D2R and quit Battle.net",
     `Battle.net starts D2R with <span class="mono">-seed ${run.seed}</span>`,
     "Load the character, enter a game, then Save &amp; Exit and close D2R",
+    "",
     "Quit Battle.net again so the seed can come off",
     "D2R starts normally, without the seed"];
   const howQuit = `right-click the Battle.net icon next to the clock → <b>Exit</b> (closing its window only hides it)`;
-  const say = {
+  const say = auto ? {
+    wait_closed: `D2R is open: <b>Save &amp; Exit</b> and close it. The seed run carries on by itself as soon as it's closed
+      (a running game is never closed for you before the seed is in).`,
+    starting: `Battle.net is starting D2R with seed <b>${run.seed}</b> (${mins(run.elapsed)} so far). Log in if it asks.`,
+    playing: `D2R is running with seed <b>${run.seed}</b>. Load the character that should get this map and <b>create a game</b>
+      (offline). That's all: D2R is closed for you as soon as the seed is in the character's map.`,
+    closing: `Seed <b>${run.seed}</b> is in <b>${esc(run.taken_by || "")}</b>'s map. Closing D2R…`,
+    wait_closed_after: off ? "Taking the seed off…" : "Closing Battle.net and taking the seed off; D2R starts again normally.",
+    done: `Done. <b>${esc(run.taken_by || "The character")}</b> has seed ${run.seed}'s map, and D2R is starting normally without the seed.`,
+    cancelled: run.launched && !run.taken_by
+      ? `<div class="notice bad">D2R closed before a game was created, so the seed didn't take.</div>The seed is off again.`
+      : "Seed run cancelled. Battle.net's launch arguments are back to how they were.",
+  }[run.stage] : {
     wait_closed: `Close D2R if it's open and quit Battle.net completely: ${howQuit}. The seed goes in as soon as both are closed.`,
     starting: `Battle.net is starting D2R with seed <b>${run.seed}</b> (${mins(run.elapsed)} so far). Log in if it asks.`,
     playing: `D2R is running with seed <b>${run.seed}</b>. Load the character that should get this map, enter a game
       (offline), then <b>Save &amp; Exit</b> and close D2R.`,
+    closing: "Closing D2R…",
     wait_closed_after: (off ? "" : run.changed && run.changed.length
         ? `<div class="notice ok">Saved during the seeded game: <b>${run.changed.map(esc).join(", ")}</b>.</div>`
         : `<div class="notice bad">No character was saved while D2R ran with the seed. If you didn't enter a game, the map
@@ -522,13 +595,14 @@ function renderSeedRun(run) {
     cancelled: "Seed run cancelled. Battle.net's launch arguments are back to how they were.",
   }[run.stage];
   card.innerHTML = `<h2>Seed run · ${run.seed}</h2>
-    ${run.stage === "cancelled" ? "" : `<ol class="srsteps">${steps.map((t, i) =>
+    ${run.stage === "cancelled" ? "" : `<ol class="srsteps">${steps.map((t, i) => t &&
       `<li class="${i < at || run.stage === "done" ? "done" : i === at ? "now" : ""}">${t}</li>`).join("")}</ol>`}
     <div>${say}</div>
     ${run.error ? `<div class="notice bad">${esc(run.error)}</div>` : ""}
     ${run.notes.length ? `<div class="small muted" style="margin-top:8px">${run.notes.map(esc).join("<br>")}</div>` : ""}
     <div class="row" style="margin-top:12px">
-      ${run.stage === "wait_closed_after" && !off ? `<button class="btn" id="srAgain">Start with the seed again</button>` : ""}
+      ${run.stage === "wait_closed_after" && !off && !auto ? `<button class="btn" id="srAgain">Start with the seed again</button>` : ""}
+      ${run.stage === "cancelled" && auto && run.launched && !run.taken_by ? `<button class="btn primary" id="srRetry">▶ Try again</button>` : ""}
       ${run.active ? `<button class="btn" id="srCancel">Cancel</button>` : `<button class="btn" id="srDismiss">OK</button>`}
     </div>`;
   const act = (id, path, ask) => { const b = $(id); if (b) b.onclick = async () => {
@@ -537,8 +611,11 @@ function renderSeedRun(run) {
     catch (e) { alert(e.message); }
   }; };
   act("#srAgain", "/api/seedrun/again");
-  act("#srCancel", "/api/seedrun/cancel", at > 0 ? "Cancel the seed run? The seed comes off as soon as Battle.net is closed." : null);
+  act("#srCancel", "/api/seedrun/cancel", at > 0 ? (auto ? "Cancel the seed run? D2R is left open; the seed comes off once it's closed."
+    : "Cancel the seed run? The seed comes off as soon as Battle.net is closed.") : null);
   act("#srDismiss", "/api/seedrun/dismiss");
+  const retry = $("#srRetry");
+  if (retry) retry.onclick = () => startSeedRun(run.seed_id ? { id: run.seed_id } : { seed: run.seed });
   if (run.active) srTimer = setTimeout(async () => {
     try {
       const r = await api("/api/seedrun");
@@ -673,7 +750,7 @@ $("#tzSet").onclick = () => {
   const p = TZ.picked;
   modal(`<h2>Set the Windows clock?</h2><p>To <b>${esc(localTime(p.start))}</b><br><span class="muted">${esc(p.zone)}</span></p>
     <div class="notice">Windows will ask for permission (the clock can only be changed as administrator). While the clock is moved, websites may show certificate errors.
-    ${TZ.auto_revert ? "The real time is put back when you close Stash Sorter." : "Use <b>Revert to real time</b> when you've finished playing."}</div>
+    ${TZ.auto_revert ? "The real time is put back when you close Horadric Toolkit." : "Use <b>Revert to real time</b> when you've finished playing."}</div>
     ${tzBackedUp ? "" : `<div class="notice">You haven't backed up your saves in this tab yet — <b>Back up saves</b> first if you want a copy.</div>`}
     <div class="row" style="justify-content:flex-end"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo">Set clock</button></div>`);
   $("#mCancel").onclick = closeModal;
@@ -746,13 +823,13 @@ function renderSession(newRun) {
   if (a) {
     top.innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0"><span class="live"></span>Session running since ${esc(a.started.slice(11, 16))}</h2>
       <button class="btn danger" id="sessEnd">End session</button></div>
-      <p class="muted small">Leave Stash Sorter open while you play. Every <b>Save &amp; Exit</b> appears below a few seconds later: what you found, what's gone (sold, used, dropped), XP and gold. Moving items between characters isn't counted. Your saves are only read, never changed.</p>
+      <p class="muted small">Leave Horadric Toolkit open while you play. Every <b>Save &amp; Exit</b> appears below a few seconds later: what you found, what's gone (sold, used, dropped), XP and gold. Moving items between characters isn't counted. Your saves are only read, never changed.</p>
       ${sessionTiles(a, true)}</div>`;
     $("#sessEnd").onclick = async () => { sessionData = await api("/api/session/end", {}); clearInterval(sessionTimer); renderSession(); };
     renderRuns(a, $("#sessionRuns"));
   } else {
     top.innerHTML = `<div class="card"><h2>Session tracker</h2>
-      <p class="muted">Track what you find while you play: every <b>Save &amp; Exit</b> is logged as a run with your loot, items that left, XP, gold and run times. Leave Stash Sorter open in the background, play as normal, and end the session when you're done. Past sessions are kept below.</p>
+      <p class="muted">Track what you find while you play: every <b>Save &amp; Exit</b> is logged as a run with your loot, items that left, XP, gold and run times. Leave Horadric Toolkit open in the background, play as normal, and end the session when you're done. Past sessions are kept below.</p>
       <button class="btn primary" id="sessStart">Start session</button></div>`;
     $("#sessStart").onclick = async () => {
       $("#sessStart").disabled = true; $("#sessStart").textContent = "Reading your saves…";
@@ -907,6 +984,118 @@ async function loadBackups() {
   $$("[data-r]").forEach(b => b.onclick = () => confirm(`Restore ${esc(b.dataset.r)}?`, "Your whole save folder goes back to exactly how it was in this backup (anything since is lost, but backed up first).", () => api("/api/restore", { file: b.dataset.r })));
 }
 
+// ---------------------------------------------------------------- item art
+let IA = null;
+const IA_KIND = { unique: "Unique", set: "Set item", base: "Base item" };
+const IA_MAX = 120;
+async function loadItemArt() { IA = await api("/api/artmod"); renderItemArt(); }
+function iaApply(path, body, busy) {  // run an Art Mod action, show the result
+  return api(path, body).then(r => { IA = r; allItems = null; renderItemArt(); return r; });
+}
+const iaFail = e => failed(e, "Couldn't change it");
+function renderItemArt() {
+  $("#iaDir").textContent = IA.data_dir || "not found";
+  const st = $("#iaStatus");
+  if (!IA.available) {
+    st.innerHTML = `<div class="notice bad">The extracted game files weren't found${IA.data_dir ? ` in ${esc(IA.data_dir)}` : ""}.
+      Item Art needs <span class="mono">Data\\hd\\items</span> (extract the game with CascView, as for <span class="mono">-direct -txt</span>).</div>`;
+    $("#iaList").innerHTML = $("#iaLooks").innerHTML = "";
+    return;
+  }
+  const n = IA.changes.length;
+  st.innerHTML = (IA.game_running ? `<div class="notice bad">Diablo II: Resurrected is running: close it completely before changing anything.</div>` : "") +
+    `<div class="row"><span>${n ? `<b>${n}</b> change(s) made` : "Nothing changed yet."}</span>
+      ${n ? `<button class="btn danger" id="iaRestore">Restore originals…</button>` : ""}
+      <button class="btn small" id="iaForget" title="After a game update: treat the files as they are now">Accept the files as they are</button></div>`;
+  $("#iaRestore")?.addEventListener("click", () => {
+    if (!confirm(`Put every changed game file back as it was? This undoes all ${n} change(s).`)) return;
+    iaApply("/api/artmod/restore", {}).then(r => notify("Restored ✔", `<p>${r.restored.map(esc).join(", ") || "Nothing to restore."}</p>`)).catch(iaFail);
+  });
+  $("#iaForget").onclick = () => {
+    if (!confirm("Stop tracking changes? The saved originals are deleted, so Restore originals won't be able to undo what's changed so far.")) return;
+    iaApply("/api/artmod/forget", {}).catch(iaFail);
+  };
+
+  const kind = $("#iaKind").value, q = $("#iaQuery").value.trim().toLowerCase(), only = $("#iaChangedOnly").checked;
+  const rows = IA.items.filter(i => i.kind === kind && (!only || i.changed) &&
+    (!q || i.name.toLowerCase().includes(q) || i.base.toLowerCase().includes(q)));
+  $("#iaList").innerHTML = `<div class="small muted" style="margin-bottom:6px">${rows.length} item(s)${rows.length > IA_MAX ? ` — showing the first ${IA_MAX}, search to narrow` : ""}</div>` +
+    rows.slice(0, IA_MAX).map((i, n) => `<div class="iarow">
+      <span class="iathumb">${i.art && S.art ? `<img src="${artUrl(i.art)}" alt="" loading="lazy">` : ""}</span>
+      <span class="grow"><b>${esc(i.name)}</b> <span class="muted small">${esc(i.base)}</span>
+        ${i.changed ? '<span class="pill ok">changed</span>' : ""}${i.exists ? "" : ' <span class="pill" title="The game\'s file has no separate picture for it; changing it adds one">uses its base\'s picture</span>'}</span>
+      <button class="btn small" data-pick="${n}">Change picture…</button>
+      ${i.changed ? `<button class="btn small" data-reset="${n}">Reset</button>` : ""}</div>`).join("");
+  $$("#iaList [data-pick]").forEach(b => b.onclick = () => iaPicker(rows[+b.dataset.pick]));
+  $$("#iaList [data-reset]").forEach(b => b.onclick = () => {
+    const i = rows[+b.dataset.reset];
+    iaApply("/api/artmod/reset_art", { kind: i.kind, key: i.key }).catch(iaFail);
+  });
+
+  const names = IA.looks.map(l => l.name), opts = names.map(x => `<option>${esc(x)}</option>`).join("");
+  for (const id of ["#iaArmor", "#iaLike"]) { const sel = $(id), keep = sel.value; sel.innerHTML = opts; if (names.includes(keep)) sel.value = keep; }
+  const parts = c => Object.entries(c).map(([k, v]) => `${k} ${v}`).join(", ");
+  const changedLooks = IA.looks.filter(l => l.changed);
+  $("#iaLooks").innerHTML = changedLooks.length ? `<table><tr><th>Body armour</th><th>Now wears</th><th>Was</th><th></th></tr>` +
+    changedLooks.map(l => `<tr><td><b>${esc(l.name)}</b></td><td class="small">${esc(parts(l.components))}</td><td class="small muted">${esc(parts(l.original || {}))}</td>
+      <td><button class="btn small" data-lookreset="${esc(l.name)}">Reset</button></td></tr>`).join("") + "</table>" : "";
+  $$("#iaLooks [data-lookreset]").forEach(b => b.onclick = () => iaApply("/api/artmod/reset_look", { armor: b.dataset.lookreset }).catch(iaFail));
+}
+function iaPicker(it) {
+  let pick = null;
+  const sprites = IA.sprites, groups = [...new Set(sprites.map(s => s.group))].sort();
+  modal(`<h2>${esc(it.name)} · picture</h2>
+    <p class="small muted">${IA_KIND[it.kind]} · currently <span class="mono">${esc((it.art || "").split("/").slice(1).join("/") || "?")}</span>.
+      ${it.exists ? "" : "The game's file has no separate picture for this one; applying adds one."}
+      Pick one of the game's pictures, or copy another item's. Choose one of the same kind (helmet for helmet, axe for axe):
+      the item's 3D model probably follows the picture.</p>
+    <div class="row">
+      <div class="field grow"><label>Filter pictures</label><input type="text" id="iaQ" placeholder="e.g. crown, ring, axe" autocomplete="off"></div>
+      <div class="field"><label>Type</label><select id="iaGroup"><option value="">All</option>${groups.map(g => `<option>${esc(g)}</option>`).join("")}</select></div>
+      <div class="field"><label>Or copy another item's picture</label><input type="text" id="iaCopy" list="iaNames" placeholder="item name" autocomplete="off"></div>
+    </div>
+    <datalist id="iaNames">${IA.items.filter(i => i.art).map(i => `<option value="${esc(i.name)}">`).join("")}</datalist>
+    <div id="iaGrid" class="iagrid"></div>
+    <div class="small" id="iaChosen" style="margin-top:6px"></div>
+    <div class="notice">Close Diablo II: Resurrected completely first. <b>Restore originals</b> on this tab undoes everything.</div>
+    <div id="iaErr"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" id="mCancel">Cancel</button><button class="btn danger" id="mGo" disabled>Apply</button></div>`);
+  const grid = $("#iaGrid"), chosen = $("#iaChosen");
+  const choose = s => {
+    pick = s; $("#mGo").disabled = !s;
+    chosen.innerHTML = s ? `New picture: <b class="mono">${esc(s.value)}</b>` : "";
+    $$("#iaGrid .iatile").forEach(t => t.classList.toggle("sel", !!s && t.dataset.key === s.key));
+  };
+  const draw = () => {
+    const q = $("#iaQ").value.trim().toLowerCase(), g = $("#iaGroup").value;
+    const list = sprites.filter(s => (!g || s.group === g) && (!q || s.key.includes(q)));
+    grid.innerHTML = list.slice(0, 200).map(s => `<div class="iatile${pick && pick.key === s.key ? " sel" : ""}" data-key="${esc(s.key)}" title="${esc(s.value)}">
+      ${S.art ? `<img src="${artUrl(s.key)}" alt="" loading="lazy">` : ""}<span class="small">${esc(s.name)}</span></div>`).join("") +
+      (list.length > 200 ? `<div class="small muted">${list.length - 200} more: filter to narrow</div>` : "");
+    $$("#iaGrid .iatile").forEach(t => t.onclick = () => choose(sprites.find(s => s.key === t.dataset.key)));
+  };
+  $("#iaQ").oninput = $("#iaGroup").onchange = draw;
+  $("#iaCopy").onchange = () => {
+    const src = IA.items.find(i => i.art && i.name.toLowerCase() === $("#iaCopy").value.trim().toLowerCase());
+    const s = src && sprites.find(x => x.key === src.art);
+    if (s) { choose(s); $("#iaQ").value = s.name; draw(); }
+  };
+  draw();
+  $("#mCancel").onclick = closeModal;
+  $("#mGo").onclick = async () => {
+    $("#mGo").disabled = true; $("#mGo").textContent = "Applying…"; $("#iaErr").innerHTML = "";
+    try { await iaApply("/api/artmod/set_art", { kind: it.kind, key: it.key, sprite: pick.value }); closeModal(); }
+    catch (e) { $("#iaErr").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; $("#mGo").disabled = false; $("#mGo").textContent = "Apply"; }
+  };
+}
+$("#iaKind").onchange = $("#iaChangedOnly").onchange = () => IA && renderItemArt();
+$("#iaQuery").oninput = () => IA && renderItemArt();
+$("#iaLookApply").onclick = () => {
+  const armor = $("#iaArmor").value, like = $("#iaLike").value;
+  if (armor === like) return failed(new Error("Pick a different armour to copy the look from."), "Nothing to change");
+  iaApply("/api/artmod/set_look", { armor, like }).catch(iaFail);
+};
+
 // ---------------------------------------------------------------- wiring
 function renderBanner() {
   const b = $("#banner");
@@ -915,7 +1104,7 @@ function renderBanner() {
     b.innerHTML = `<div class="notice bad"><b>A previous change was interrupted.</b> Your saves may be half-updated. Roll back to the backup taken just before it: <button class="btn" id="recoverBtn">Roll back now</button></div>`;
     $("#recoverBtn").onclick = async () => { await api("/api/recover", {}); await refresh(); };
   } else if (S.stale && S.stale.length) {
-    b.innerHTML = `<div class="notice">Your saves changed since Stash Sorter read them (you've been playing). <button class="btn small" id="staleReload">Reload saves</button> before sorting.</div>`;
+    b.innerHTML = `<div class="notice">Your saves changed since Horadric Toolkit read them (you've been playing). <button class="btn small" id="staleReload">Reload saves</button> before sorting.</div>`;
     $("#staleReload").onclick = () => $("#reloadBtn").click();
   } else if (S.errors.length) {
     b.innerHTML = `<div class="notice bad">Some files could not be read and will be left alone:<br>${S.errors.map(e => esc(e[0] + ": " + e[1])).join("<br>")}</div>`;
@@ -946,7 +1135,7 @@ async function show(name) {
   $$("main section").forEach(s => s.classList.toggle("active", s.id === b.dataset.s));
   if (location.hash.slice(1).split("-")[0] !== b.dataset.s) history.replaceState(null, "", "#" + b.dataset.s);
   hideTip();
-  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup, session: loadSession, tz: () => loadTz(!TZ), launch: async () => { await loadLaunch(); await loadSeeds(); } };
+  const loaders = { assess: loadAssess, backups: loadBackups, find: loadFind, grail: loadGrail, rules: loadRules, cleanup: loadCleanup, session: loadSession, itemart: loadItemArt, tz: () => loadTz(!TZ), launch: async () => { await loadLaunch(); await loadSeeds(); } };
   if (loaders[b.dataset.s]) await loaders[b.dataset.s]();
 }
 $$("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.s)));
@@ -954,6 +1143,10 @@ $("#reloadBtn").onclick = async () => { await api("/api/reload", {}); curPlan = 
 $("#planBtn").onclick = preview;
 $("#stashSel").onchange = () => { store.set("stash", $("#stashSel").value); stashTab = 0; renderOverview(); loadStash(); };
 $("#muleLevel").onchange = $("#muleHint").onchange = $("#resetMules").onclick = resetRoles;
+$("#allEmpty").onclick = () => {
+  for (const c of S.characters) if (!c.blocked && roles[c.name] !== "mule") roles[c.name] = "empty";
+  store.set("roles", roles); renderOverview();
+};
 $("#crafter").onchange = () => { store.set("crafter", +$("#crafter").value); allItems = null; loadAssess(); };
 $("#scope").onchange = loadAssess;
 ["#kind", "#minTier", "#keepOnly"].forEach(s => $(s).onchange = renderAssess);

@@ -1,4 +1,4 @@
-# Builds StashSorter.exe on Windows and attaches it (plus its SHA-256) to a GitHub release.
+# Builds HoradricToolkit.exe on Windows and attaches it (plus its SHA-256) to a GitHub release.
 # Runs when a release is published; run it by hand (Actions -> Release exe -> Run workflow) to rebuild one.
 name: Release exe
 
@@ -32,14 +32,14 @@ jobs:
           python-version: "3.12"
       - name: Tests
         run: python -m unittest discover -s tests
-      - name: Build StashSorter.exe
+      - name: Build HoradricToolkit.exe
         run: python tools/build_exe.py
       - name: Check the exe starts and has the release's version
         run: |
-          out=$(dist/StashSorter.exe --version)
+          out=$(dist/HoradricToolkit.exe --version)
           echo "$out"
-          [ "$out" = "Stash Sorter ${TAG#v}" ]
+          [ "$out" = "Horadric Toolkit ${TAG#v}" ]
       - name: Checksum
-        run: cd dist && sha256sum -b StashSorter.exe > StashSorter.exe.sha256 && cat StashSorter.exe.sha256
+        run: cd dist && sha256sum -b HoradricToolkit.exe > HoradricToolkit.exe.sha256 && cat HoradricToolkit.exe.sha256
       - name: Attach to the release
-        run: gh release upload "$TAG" dist/StashSorter.exe dist/StashSorter.exe.sha256 --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$TAG" dist/HoradricToolkit.exe dist/HoradricToolkit.exe.sha256 --clobber --repo "$GITHUB_REPOSITORY"

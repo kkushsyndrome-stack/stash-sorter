@@ -1,4 +1,4 @@
-"""Entry point for the packaged StashSorter.exe."""
+"""Entry point for the packaged HoradricToolkit.exe."""
 
 from stash_sorter.cli import main
 

@@ -1,10 +1,12 @@
-# Stash Sorter
+# Horadric Toolkit
 
-![Stash Sorter](docs/social-preview.png)
+![Horadric Toolkit](docs/social-preview.png)
 
-Empty your **Diablo II: Resurrected** shared stash onto your mules — sorted by category, with mules renamed to
-match what they hold — find any item across every character, track your holy grail, and see what your items'
-**item levels** are good for (crafting, rerolling, sockets).
+An all-purpose toolkit for **Diablo II: Resurrected** (offline): empty your shared stash and every character's
+personal stash onto mules — sorted by category, with mules renamed to match what they hold — find any item across
+every character, track your holy grail, change the **appearance** of your rings, amulets, charms and jewels, see what
+your items' **item levels** are good for (crafting, rerolling, sockets), track your sessions, and manage launch
+options, map seeds and terror zones.
 
 Works with offline (single-player) saves from D2R 1.0 through **Reign of the Warlock** (save versions 97–105).
 Runs locally on your PC; nothing is uploaded anywhere.
@@ -22,20 +24,31 @@ Runs locally on your PC; nothing is uploaded anywhere.
   their stash goes onto the mules along with the shared stash (works with every mode except *Bring the old stash forward*). Their inventory,
   cube and gear stay put, and so do the Horadric Cube itself and quest items.
 - **Rename mules** to match their contents (`CharmsOne`, `CraftBaitTwo`, …).
-- **Rename any character** from its page on the Overview (`StashSorter.exe rename OldName NewName` in the terminal).
+- **Change item appearance** — rings, amulets, charms and jewels each come in several pictures, and the save
+  stores which one an item shows. Click one on a character's page (or *Appearance…* in Find), pick a picture and apply
+  it to that item, all of that kind on the character, or all you own. Only the picture changes: stats, affixes and
+  sockets stay as they are. Unique and set items can't be restyled (their art comes from the game's tables), and
+  weapons and armour have no picture choice.
+- **Item Art** — change which picture any unique, set or base item shows in your inventory (pick any of the game's own
+  pictures, or copy another item's), and make a body armour look like another on your character (per base item:
+  every Dusk Shroud, say). Helmets, shields, gloves, boots, belts and weapons use one entry for both their picture and
+  their 3D model, so changing it probably changes their look on the character too (untested). It edits the extracted `Data\hd\items` files the game reads with `-direct -txt`, copies every file
+  before its first change, and **Restore originals** puts everything back. Close the game first; a game update or
+  repair overwrites the changes. New artwork can't be drawn yet.
+- **Rename any character** from its page on the Overview (`HoradricToolkit.exe rename OldName NewName` in the terminal).
 - **Test run** — move just 1 or 5 items, check in game, then do the rest.
 - **Create new mules** when space runs out (experimental): copies an empty level-1 character without its items.
 - **Stackables tab** (beta): move loose runes, gems and materials into the RotW Stackables tab.
 
-**Session tracker:** leave Stash Sorter open while you play and press *Start session*. Every Save & Exit is
+**Session tracker:** leave Horadric Toolkit open while you play and press *Start session*. Every Save & Exit is
 logged as a run: the loot you found (new holy-grail finds flagged), what left (sold, used, dropped), experience,
 levels and gold gained, run times and runs per hour. Moving items between characters isn't counted as loot, and
 your saves are only read. Finished sessions are kept in a `sessions` folder next to the app for later.
 
 **Terror Zones:** in single-player/offline D2R the terror zone follows a fixed schedule based on your PC's
-clock. Pick a zone and Stash Sorter moves the Windows clock to its most recent session (Windows asks for
+clock. Pick a zone and Horadric Toolkit moves the Windows clock to its most recent session (Windows asks for
 permission each time; only that one step runs as administrator), then puts the real time back from
-`time.windows.com` when you click *Revert* or close Stash Sorter. Shows the zone active right now with immunities,
+`time.windows.com` when you click *Revert* or close Horadric Toolkit. Shows the zone active right now with immunities,
 boss packs and super uniques, what's coming up, and pins your favourite zones. Schedule from
 [d2emu.com](https://d2emu.com/tz-sp), cached for offline use. (This was the stand-alone D2R Terror Zone Clock;
 its favourites and saved schedule are picked up automatically.)
@@ -51,7 +64,7 @@ put them back. *Launch D2R* starts the game through Battle.net.
 `-seed`, you load the character and play one game, and once you've closed D2R and quit Battle.net the seed is taken
 off again and D2R starts normally. The character keeps the map. Taking `-seed` off matters: leaving it in makes the
 game's random numbers predictable. The tab walks you through each step, notices on its own when D2R and Battle.net
-open and close, and shows which characters were saved during the seeded game. If Stash Sorter is closed partway
+open and close, and shows which characters were saved during the seeded game. If Horadric Toolkit is closed partway
 through, it finishes the run (and takes the seed off) the next time it starts. Keep the seeds you like as
 favourites, each with a name, what it's for (Cows, Pit / Tombs, Chaos, ...) and notes, and start a seed run from
 any of them with one click.
@@ -83,7 +96,7 @@ rares, ethereal bases, bases, magic gear, everything else.
 
 ## Safety
 
-Your save files are precious, so Stash Sorter is careful:
+Your save files are precious, so Horadric Toolkit is careful:
 
 - **Preview first.** Nothing is written until you press *Apply* on a plan you've looked at.
 - **Full backup** of the whole save folder (zip) before every change.
@@ -102,19 +115,19 @@ Still: keep your own backups too, and use at your own risk. Only for offline cha
 
 ## Getting started
 
-**Easiest:** download `StashSorter.exe` from the [latest release](https://github.com/kkushsyndrome-stack/stash-sorter/releases/latest),
+**Easiest:** download `HoradricToolkit.exe` from the [latest release](https://github.com/kkushsyndrome-stack/stash-sorter/releases/latest),
 put it in a folder of its own, close Diablo II: Resurrected completely, and double-click it. Your browser opens the
 app. (Backups and your rules are kept next to the exe.) Windows may warn about an unrecognised app because the exe
 isn't code-signed: choose *More info → Run anyway*, or run from source instead.
 
 **From source:** install [Python 3.9+](https://www.python.org/downloads/) (tick *Add python.exe to PATH*),
-download this folder, and double-click **`Stash Sorter.bat`** — or run `python -m stash_sorter`.
+download this folder, and double-click **`Horadric Toolkit.bat`** — or run `python -m stash_sorter`.
 
 ### In the app
 
 1. **Overview** — your characters, each with a **role**: *Mule* (default: level-1 characters and anything with
    "mule" in the name that can use the stash), *Empty stash* (a character you play whose personal stash should go
-   onto the mules too) or *Leave alone*. Click a row to look inside.
+   onto the mules too; *Every non-mule: Empty stash* sets them all) or *Leave alone*. Click a row to look inside.
 2. **Shared Stash** — click items you want to **keep** in the stash (⚑).
 3. **Sort & Distribute** — pick a mode, **Preview plan**, check where things go, then **Apply**.
    New to it? Set *Test run* to "Just 1 item" first.
@@ -151,20 +164,21 @@ python -m stash_sorter rules [--load my_rules.json | --reset]
 
 Useful options: `--saves <folder>` (e.g. a mod's save folder), `--mule-level N`, `--mules A,B,C`,
 `--exclude A,B`, `--keep runes,gems`, `--stackables`, `--create-mules N`, `--backups <folder>`.
-`StashSorter.exe` takes the same arguments.
+`HoradricToolkit.exe` takes the same arguments.
 
 ## Good to know
 
 - **Eras.** RotW characters use the RotW shared stash (`ModernSharedStash…`); Resurrected-era characters use the
   older stash. Items only move to characters that can use the selected stash.
 - **Old saves** (e.g. v99) must be **logged in once** so the game upgrades them before they can receive items.
-- **Mules without a Horadric Cube** get inventory (10×4) + personal stash (10×10).
+- **Mule storage** is the personal stash (10×10) and inventory (10×4). A mule's Horadric Cube, and anything in it,
+  is left alone, and so is equipped gear and the belt on every character.
 - **Renaming** renames the character's `.d2s` and side files (`.ctl`, `.key`, `.ma*`, `.map`) and the name inside
   the save. Names must be 2–15 letters (one `-` or `_` allowed).
 
 ## Game data & artwork
 
-Stash Sorter reads tables, strings and item artwork from your install when the game files have been extracted
+Horadric Toolkit reads tables, strings and item artwork from your install when the game files have been extracted
 (`Data/global/excel`, `Data/local/lng/strings`, `Data/hd/global/ui/items`). Mods: `--data-dir <mod>/data`.
 Without extracted files it uses a small snapshot of the tables bundled in `stash_sorter/data/` (D2R 3.3.93847) and
 draws coloured boxes instead of artwork. Refresh the snapshot after a patch with
@@ -174,7 +188,7 @@ draws coloured boxes instead of artwork. Refresh the snapshot after a patch with
 
 ```
 python -m unittest discover -s tests -v     # tests
-python tools/build_exe.py                   # builds dist/StashSorter.exe (isolated build environment)
+python tools/build_exe.py                   # builds dist/HoradricToolkit.exe (isolated build environment)
 ```
 
 `tests/test_fixtures.py` runs anywhere using the sample saves in `tests/fixtures/hlb` and the bundled game data.

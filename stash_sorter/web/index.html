@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stash Sorter</title>
+<title>Horadric Toolkit</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <header>
-  <h1>⚜ Stash Sorter <small style="font-size:12px;color:var(--muted);font-weight:normal">v__VERSION__</small></h1>
+  <h1>⚜ Horadric Toolkit <small style="font-size:12px;color:var(--muted);font-weight:normal">v__VERSION__</small></h1>
   <nav id="nav">
     <button data-s="overview" class="active">Overview</button>
     <button data-s="stash">Shared Stash</button>
@@ -17,6 +17,7 @@
     <button data-s="tz">Terror Zones</button>
     <button data-s="launch">Launch</button>
     <button data-s="find">Find</button>
+    <button data-s="itemart">Item Art</button>
     <button data-s="grail">Collection</button>
     <button data-s="assess">Item Levels</button>
     <button data-s="cleanup">Clean Up</button>
@@ -32,11 +33,12 @@
     <div class="grid-cards" id="ovCards"></div>
     <div class="card">
       <h2>Characters</h2>
-      <p class="muted small">Each character's <b>role</b>: <b>Mule</b> characters receive sorted loot (by default every level-1 character, plus any with "mule" in the name, that can use the selected stash). For characters you play, <b>Empty stash</b> has Sort &amp; Distribute move their personal stash onto the mules too (never their inventory, cube or gear). <b>Leave alone</b> is never touched. Click a row to look inside.</p>
+      <p class="muted small">Each character's <b>role</b>: <b>Mule</b> characters receive sorted loot in their stash and inventory; their cube and anything in it are left alone (by default every level-1 character, plus any with "mule" in the name, that can use the selected stash). For characters you play, <b>Empty stash</b> has Sort &amp; Distribute move their personal stash onto the mules too (never their inventory, cube or gear). <b>Leave alone</b> is never touched. Click a row to look inside.</p>
       <div class="row" style="margin-bottom:8px">
         <div class="field"><label>Mule = level at or below</label><input type="number" id="muleLevel" min="1" max="99" value="1"></div>
         <label class="check"><input type="checkbox" id="muleHint" checked> …or "mule" in the name</label>
         <button class="btn" id="resetMules">Reset mules</button>
+        <button class="btn" id="allEmpty" title="Every character that isn't a mule gets the role Empty stash">Every non-mule: Empty stash</button>
       </div>
       <div class="table-wrap"><table id="charTable"></table></div>
     </div>
@@ -91,6 +93,46 @@
     <div class="card"><h2>Past sessions</h2><div class="table-wrap"><table id="sessionHistory"></table></div></div>
   </section>
 
+  <section id="itemart">
+    <div class="card">
+      <h2>Item art <span class="pill warn">edits the game's files</span></h2>
+      <p class="muted small">Change which picture any unique, set or base item shows in your inventory, and how a body
+        armour looks on your character. It edits the extracted files the game reads with
+        <span class="mono">-direct -txt</span> (<span class="mono" id="iaDir"></span>). Every file is copied before its first
+        change and <b>Restore originals</b> puts them all back. Close Diablo II: Resurrected before changing anything, and
+        expect a game update or repair to overwrite your changes. Pictures can be swapped for any of the game's own
+        pictures; drawing new ones isn't built yet.</p>
+      <p class="small"><b>Pictures and models.</b> The game names an item's inventory picture and its 3D model after the
+        same entry, so for helmets, shields, gloves, boots, belts and weapons a change here probably also changes how
+        the item looks on your character and on the ground. I can't check that from here, so <b>try one item first</b>.
+        Swap like for like (a helmet for a helmet, an axe for an axe): a bow's picture on a sword may look wrong.
+        Body armour has a second part below, the parts it wears on the character.</p>
+      <div id="iaStatus"></div>
+    </div>
+    <div class="card">
+      <h2>Pictures and models</h2>
+      <div class="row">
+        <div class="field"><label>Show</label><select id="iaKind"><option value="unique">Unique items</option><option value="set">Set items</option><option value="base">Base items</option></select></div>
+        <div class="field grow"><label>Search</label><input type="text" id="iaQuery" placeholder="e.g. harlequin, ring, shield"></div>
+        <label class="check"><input type="checkbox" id="iaChangedOnly"> changed only</label>
+      </div>
+      <div id="iaList" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h2>Character look <span class="small muted">(body armour)</span></h2>
+      <p class="muted small">Makes one body armour wear the body, arm and leg models of another. The look belongs to the
+        base item, so <b>every</b> item of that base changes, uniques and runewords included: a Dusk Shroud made to look like
+        Sacred Armor changes every Dusk Shroud. Other slots are in the section above.
+        <b>Try one armour in the game first</b>; I can't see the game from here.</p>
+      <div class="row">
+        <div class="field"><label>Body armour</label><select id="iaArmor"></select></div>
+        <div class="field"><label>Should look like</label><select id="iaLike"></select></div>
+        <button class="btn primary" id="iaLookApply">Apply look</button>
+      </div>
+      <div id="iaLooks" style="margin-top:10px"></div>
+    </div>
+  </section>
+
   <section id="tz">
     <div class="tzhero">
       <div class="tzart"><div class="tztitle">Terror Zone Clock</div></div>
@@ -99,7 +141,7 @@
         <div class="row" style="flex-wrap:nowrap;gap:6px"><select id="tzZone" style="flex:1;min-width:0"></select><button class="btn" id="tzFav" title="Favourite">☆</button></div>
         <div id="tzSession"></div>
         <div class="row" style="margin-top:12px"><button class="btn danger" id="tzSet">Set clock to this session</button><button class="btn" id="tzRevert">Revert to real time</button></div>
-        <label class="check" style="margin-top:10px"><input type="checkbox" id="tzAuto"> Restore real time when Stash Sorter closes</label>
+        <label class="check" style="margin-top:10px"><input type="checkbox" id="tzAuto"> Restore real time when Horadric Toolkit closes</label>
         <div class="row" style="margin-top:10px"><button class="btn" id="tzBackup">Back up saves</button><span class="small muted" id="tzBackupMsg">Zips your D2R save folder, just in case.</span></div>
         <div class="small" id="tzStatus" style="margin-top:12px"></div>
       </div>
@@ -129,9 +171,10 @@
         <button class="btn small" id="lnFavSave">★ Save this seed</button>
         <button class="btn small primary" id="lnSeedRun">▶ Seed run</button>
       </div>
-      <div class="small muted" style="margin-top:6px"><b>Seed run</b> gives a character this map: D2R starts once with
-        <span class="mono">-seed</span>, you play one game, then the seed comes off again and D2R starts normally.
-        The map stays with the character, and the game's random numbers stay unpredictable.
+      <div class="small muted" style="margin-top:6px"><b>Seed run</b> gives a character this map, by itself: Battle.net is
+        closed, D2R starts with <span class="mono">-seed</span>, you load the character and create a game, and once the
+        seed is in the character's map D2R is closed, the seed comes off and D2R starts again normally. The map stays with
+        the character, and the game's random numbers stay unpredictable. Your saves are backed up first.
       </div>
       <div class="row" style="margin-top:12px">
         <div class="field"><label>Mod (-mod)</label><select id="lnMod"></select></div>

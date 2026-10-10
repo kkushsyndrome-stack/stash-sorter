@@ -3,7 +3,7 @@
 In single-player/offline D2R the active terror zone follows a fixed schedule based on the PC's clock, so moving the
 clock to a session start makes that zone active. Ported from the D2R Terror Zone Clock app.
 
-Only setting the clock needs administrator rights: Stash Sorter itself runs normally and asks Windows (UAC) to run
+Only setting the clock needs administrator rights: Horadric Toolkit itself runs normally and asks Windows (UAC) to run
 a tiny elevated helper (`set-clock`) for each change. The real time comes from time.windows.com (SNTP).
 Schedule: https://d2emu.com/data/tz-2023-localized.json (cached for offline use).
 """
@@ -85,7 +85,7 @@ def set_local_time(local):
 
 
 def _helper_command():
-    """(program, arguments, working folder) that runs `set-clock` in this same Stash Sorter."""
+    """(program, arguments, working folder) that runs `set-clock` in this same Horadric Toolkit."""
     if getattr(sys, "frozen", False):
         return sys.executable, "", str(paths.app_dir())
     return sys.executable, "-m stash_sorter", str(paths.app_dir())

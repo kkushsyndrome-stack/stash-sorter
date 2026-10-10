@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .bits import BitReader
-from .items import read_item_list, read_items, write_item_list, MODE_STORED
+from .items import read_item_list, write_item_list, MODE_STORED
 
 MAGIC = 0xAA55AA55
 ERA_NAMES = {1: "Classic", 2: "Resurrected", 3: "Reign of the Warlock"}
@@ -80,9 +80,6 @@ class Character:
         struct.pack_into("<I", out, 12, 0)
         struct.pack_into("<I", out, 12, checksum(out))
         return bytes(out)
-
-    def stored_items(self, page):
-        return [i for i in self.items if i.mode == MODE_STORED and i.page == page]
 
 
 def parse_character(path, gd, data=None):
