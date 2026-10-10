@@ -136,7 +136,8 @@ class Session:
             top = max(set(cats), key=cats.count) if cats else ""
             chars.append({
                 "name": c.name, "file": c.path.name, "class": c.class_name, "level": c.level,
-                "era": c.era_name, "version": c.version, "hardcore": c.hardcore, "items": len(stored),
+                "era": c.era_name, "era_id": c.era, "version": c.version, "hardcore": c.hardcore,
+                "has_cube": any(i.code == "box" for i in c.items), "items": len(stored),
                 "cells": sum(C.item_size(i, self.gd)[0] * C.item_size(i, self.gd)[1] for i in stored),
                 "mule_ok": ok, "reason": reason, "top_category": top, "gold": c.gold,
                 "top_share": round(cats.count(top) / len(cats), 2) if cats else 0,
@@ -150,6 +151,7 @@ class Session:
             "journal": applier.pending_journal(self.backup_dir),
             "stale": [p.name for p in w.changed_on_disk()][:10],
             "stashes": [{"file": s.path.name, "modern": s.modern, "hardcore": s.hardcore, "era": s.era,
+                         "version": s.tabs[0].version if s.tabs else 0,
                          "items": sum(len(t.items) for t in s.normal_tabs()),
                          "gold": sum(t.gold for t in s.tabs),
                          "tabs": [{"type": t.type, "items": len(t.items), "gold": t.gold} for t in s.tabs]}
@@ -354,7 +356,8 @@ class Session:
         leaving = {id(m.item) for m in p.moves} | {id(m.item) for m in p.merges}
         existing = {}
         for dest in by_dest:
-            ch = self.world.character(dest)
+            target_files = {m.dst_file for m in p.moves if m.dst_char == dest}
+            ch = next((c for c in self.world.characters if c.path.name in target_files), None)
             if ch is not None:
                 existing[dest] = [
                     {"name": C.display_name(it, gd, names), "page": it.page, "x": it.x, "y": it.y,
@@ -700,6 +703,11 @@ class Session:
 
     def plan_delete_items(self, keys):
         self.plan = planner.plan_item_deletions(self.world, keys)
+        self.plan_id += 1
+        return self.plan_json()
+
+    def plan_move_item(self, key, destination, page):
+        self.plan = planner.plan_item_move(self.world, key, destination, int(page))
         self.plan_id += 1
         return self.plan_json()
 

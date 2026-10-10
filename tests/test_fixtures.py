@@ -277,6 +277,54 @@ class Sandbox(unittest.TestCase):
         A.undo_apply(res["log"], self.saves, self.backups, log=lambda m: None, skip_game_check=True)
         self.assertEqual(self._snapshot(), before)
 
+    def test_manual_move_preserves_socketed_character_item_and_undo(self):
+        before = self._snapshot()
+        w = W.load_world(self.saves, GD)
+        source = next(c for c in w.characters if any(i.children and i.mode == 0 for i in c.items))
+        item = next(i for i in source.items if i.children and i.mode == 0)
+        target = next(c for c in w.characters if c is not source
+                      and (c.version, c.era, c.hardcore) == (source.version, source.era, source.hardcore))
+        key = planner.item_key(source.path.name, "items", item)
+        child_ids = [_identity(child) for child in item.children]
+        from stash_sorter.service import Session
+        session = Session(saves=self.saves, backups=self.backups)
+        session.gd = GD
+        session.reload()
+        preview = session.plan_move_item(key, target.path.name, 5)
+        self.assertEqual(preview["moves"], 1)
+        self.assertEqual(preview["labels"]["manual"], "Manual move")
+        self.assertEqual(len(session.plan.moves[0].item.children), len(child_ids))
+
+        res = A.apply_plan(session.world, session.plan, self.backups, log=lambda m: None, skip_game_check=True)
+        moved_world = W.load_world(self.saves, GD)
+        moved = next(c for c in moved_world.characters if c.path.name == target.path.name)
+        moved_item = next(i for i in moved.items if _identity(i) == _identity(item))
+        self.assertEqual([_identity(child) for child in moved_item.children], child_ids)
+        self.assertEqual(moved_item.page, 5)
+        A.undo_apply(res["log"], self.saves, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_manual_move_preserves_socketed_shared_stash_item(self):
+        before = self._snapshot()
+        w = W.load_world(self.saves, GD)
+        source = next(s for s in w.stashes if any(i.children for t in s.tabs for i in t.items))
+        tab_index = next(ti for ti, tab in enumerate(source.tabs) if any(i.children for i in tab.items))
+        tab = source.tabs[tab_index]
+        item = next(i for i in tab.items if i.children)
+        target = next(c for c in w.characters
+                      if (c.version, c.era, c.hardcore) == (tab.version, source.era, source.hardcore))
+        key = planner.item_key(source.path.name, f"tab{tab_index}", item)
+        child_ids = [_identity(child) for child in item.children]
+        plan = planner.plan_item_move(w, key, target.path.name, 5)
+        res = A.apply_plan(w, plan, self.backups, log=lambda m: None, skip_game_check=True)
+        moved_world = W.load_world(self.saves, GD)
+        moved = next(c for c in moved_world.characters if c.path.name == target.path.name)
+        moved_item = next(i for i in moved.items if _identity(i) == _identity(item))
+        self.assertEqual([_identity(child) for child in moved_item.children], child_ids)
+        self.assertEqual(moved_item.page, 5)
+        A.undo_apply(res["log"], self.saves, self.backups, log=lambda m: None, skip_game_check=True)
+        self.assertEqual(self._snapshot(), before)
+
     def test_restyle_refuses_what_has_no_picture_choice(self):
         w = W.load_world(self.saves, GD)
         for ch in w.characters:

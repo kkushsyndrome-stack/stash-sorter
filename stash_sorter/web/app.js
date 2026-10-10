@@ -282,8 +282,8 @@ async function preview() {
   catch (e) { $("#planOut").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
   finally { $("#planBtn").disabled = false; }
 }
-function renderPlan() {
-  const p = curPlan, out = $("#planOut"), L = p.labels;
+function renderPlan(out = $("#planOut")) {
+  const p = curPlan, L = p.labels;
   const dests = Object.keys(p.by_dest);
   const actions = p.moves + p.merges.length + p.renames.length + p.new_mules.length;
   out.innerHTML = `<div class="card"><h2>Plan preview</h2>
@@ -346,7 +346,8 @@ function confirmApply() {
     try {
       const r = await api("/api/apply", { plan_id: p.id });
       applied(r, `<p class="small muted">Changed your mind? <b>Backups → Undo</b> reverses exactly this change.</p>`);
-      curPlan = null; $("#planOut").innerHTML = ""; allItems = null; grail = null; await refresh();
+      curPlan = null; $("#planOut").innerHTML = ""; $("#findPlan").innerHTML = "";
+      allItems = null; grail = null; await refresh();
     } catch (e) { failed(e); }
   };
 }
@@ -367,7 +368,7 @@ async function loadFind() {
 function renderFind() {
   const words = $("#q").value.toLowerCase().split(/\s+/).filter(Boolean), fq = $("#fq").value, fc = $("#fc").value, eq = $("#fEquipped").checked;
   const hits = allItems.filter(it => (eq || it.mode === 0) && (!fq || it.quality === fq) && (!fc || it.category === fc) &&
-    words.every(w => (it._t ||= [it.name, it.base, it.where, ...(it.stats || [])].join(" ").toLowerCase()).includes(w)));
+    words.every(w => (it._t ||= [it.name, it.base, it.where, ...(it.stats || []), ...(it.socketed || [])].join(" ").toLowerCase()).includes(w)));
   $("#findCount").textContent = `${hits.length} of ${allItems.length} items${hits.length > 300 ? " (showing the first 300)" : ""}`;
   const out = $("#findOut"); out.innerHTML = "";
   for (const it of hits.slice(0, 300)) {
@@ -375,6 +376,7 @@ function renderFind() {
     d.innerHTML = `<div class="pic">${it.art && S.art ? `<img src="${artUrl(it.art)}" alt="" loading="lazy">` : ""}</div>
       <div class="grow"><div class="q-${esc(it.quality)}">${esc(it.name)}${it.count ? ` ×${it.count}` : ""} <span class="muted small">ilvl ${it.ilvl}</span></div>
       <div class="loc"><b>${esc(it.owner || it.where)}</b>${it.place ? ` · ${esc(it.place)}` : ""}</div>
+      ${it.socketed?.length ? `<div class="small muted">Socketed: ${it.socketed.map(esc).join(", ")}</div>` : ""}
       <div class="stats">${(it.stats || []).slice(0, 4).map(esc).join("<br>")}${(it.stats || []).length > 4 ? "<br>…" : ""}</div></div>`;
     const map = spotMap(it);
     if (map) d.appendChild(map);
@@ -383,8 +385,54 @@ function renderFind() {
       b.onclick = e => { e.stopPropagation(); skinDialog(it); };
       d.querySelector(".grow").appendChild(b);
     }
+    if (it.key && it.code !== "box") {
+      const b = document.createElement("button"); b.className = "btn small"; b.textContent = "Move…";
+      b.onclick = e => { e.stopPropagation(); moveDialog(it); };
+      d.querySelector(".grow").appendChild(b);
+    }
     hoverable(d, it); out.appendChild(d);
   }
+}
+function moveDialog(it) {
+  const sourceFile = it.key.split("|", 1)[0];
+  const source = S.characters.find(c => c.file === sourceFile) || S.stashes.find(s => s.file === sourceFile);
+  const compatible = c => !source || (c.version === source.version && c.era_id === (source.era_id ?? source.era)
+    && c.hardcore === source.hardcore);
+  const characters = S.characters.filter(compatible);
+  const defaultTarget = characters.find(c => c.file !== sourceFile) || characters[0];
+  modal(`<h2>Move ${esc(it.name)}${it.socketed?.length ? " and its socketed contents" : ""}</h2>
+    <div class="field"><label>Destination character</label><select id="moveCharacter" ${characters.length ? "" : "disabled"}>${characters.map(c =>
+      `<option value="${esc(c.file)}" ${c.file === defaultTarget?.file ? "selected" : ""}>${esc(c.name)}${characters.filter(x => x.name === c.name).length > 1 ? ` (${esc(c.file)})` : ""} · ${esc(c.class)} · ${c.level}</option>`).join("")}</select></div>
+    <div class="field" style="margin-top:10px"><label>Destination storage</label><select id="movePage">
+      <option value="5">Stash</option><option value="1">Inventory</option><option value="4" ${characters.some(c => c.has_cube) ? "" : "disabled"}>Cube</option></select></div>
+    ${characters.length ? "" : `<div class="notice bad">No characters have a compatible save version, game era, and hardcore status.</div>`}
+    ${it.socketed?.length ? `<p class="small muted">Socketed items move with their host and remain socketed.</p>` : ""}
+    <div class="notice">The move is previewed first. Applying it backs up and verifies the save; undo is available under Backups.</div>
+    <div id="moveError"></div>
+    <div class="row" style="justify-content:flex-end"><button class="btn" id="mCancel">Cancel</button><button class="btn primary" id="movePreview" ${characters.length ? "" : "disabled"}>Preview move</button></div>`);
+  $("#mCancel").onclick = closeModal;
+  $("#moveCharacter").onchange = () => {
+    const character = characters.find(c => c.file === $("#moveCharacter").value);
+    const cube = $("#movePage").querySelector('option[value="4"]');
+    cube.disabled = !character?.has_cube;
+    if (cube.disabled && $("#movePage").value === "4") $("#movePage").value = "5";
+  };
+  $("#moveCharacter").onchange();
+  $("#movePreview").onclick = async () => {
+    const button = $("#movePreview"); button.disabled = true; button.textContent = "Planning…";
+    try {
+      curPlan = await api("/api/plan_move_item", {
+        key: it.key, destination: $("#moveCharacter").value, page: +$("#movePage").value,
+      });
+      closeModal();
+      $("#findPlan").innerHTML = "";
+      renderPlan($("#findPlan"));
+      $("#findPlan").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {
+      $("#moveError").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
+      button.disabled = false; button.textContent = "Preview move";
+    }
+  };
 }
 // a small picture of the grid the item sits in, with its cells lit up
 function spotMap(it) {
@@ -537,7 +585,7 @@ $("#lnStart").onclick = async () => {
 
 // ---------------------------------------------------------------- seed run
 let srTimer = null;
-const SR_ORDER = ["wait_closed", "starting", "playing", "closing", "wait_closed_after", "done"];
+const SR_ORDER = ["wait_closed", "starting", "playing", "closing", "wait_closed_after", "relaunching", "done"];
 async function startSeedRun(body) {
   try {
     const r = await api("/api/seedrun/start", body);
@@ -550,7 +598,7 @@ function renderSeedRun(run) {
   clearTimeout(srTimer);
   if (!run) { card.style.display = "none"; card.innerHTML = ""; return; }
   card.style.display = "";
-  const at = SR_ORDER.indexOf(run.stage), off = !run.relaunch;
+  const at = SR_ORDER.indexOf(run.stage === "launch_failed" ? "relaunching" : run.stage), off = !run.relaunch;
   const mins = s => s < 60 ? `${s}s` : `${Math.floor(s / 60)} min`;
   const auto = !!run.auto;
   const steps = auto ? [
@@ -575,7 +623,9 @@ function renderSeedRun(run) {
       (offline). That's all: D2R is closed for you as soon as the seed is in the character's map.`,
     closing: `Seed <b>${run.seed}</b> is in <b>${esc(run.taken_by || "")}</b>'s map. Closing D2R…`,
     wait_closed_after: off ? "Taking the seed off…" : "Closing Battle.net and taking the seed off; D2R starts again normally.",
+    relaunching: `The seed is off. Starting D2R normally (${mins(run.elapsed)} so far).`,
     done: `Done. <b>${esc(run.taken_by || "The character")}</b> has seed ${run.seed}'s map, and D2R is starting normally without the seed.`,
+    launch_failed: "The seed is off and safe. D2R did not start automatically; launch it from Battle.net.",
     cancelled: run.launched && !run.taken_by
       ? `<div class="notice bad">D2R closed before a game was created, so the seed didn't take.</div>The seed is off again.`
       : "Seed run cancelled. Battle.net's launch arguments are back to how they were.",
@@ -591,7 +641,9 @@ function renderSeedRun(run) {
             didn't change: press <b>Start with the seed again</b>.</div>`) +
       `Now quit Battle.net completely: ${howQuit}. The seed comes off as soon as it's closed` +
       (off ? "." : ", then D2R starts normally."),
+    relaunching: `The seed is off. Starting D2R normally (${mins(run.elapsed)} so far).`,
     done: `Done. The seed is off and D2R is starting normally. Characters that entered a game with seed <b>${run.seed}</b> keep its map.`,
+    launch_failed: "The seed is off and safe. D2R did not start automatically; launch it from Battle.net.",
     cancelled: "Seed run cancelled. Battle.net's launch arguments are back to how they were.",
   }[run.stage];
   card.innerHTML = `<h2>Seed run · ${run.seed}</h2>

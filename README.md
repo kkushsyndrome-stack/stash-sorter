@@ -29,6 +29,9 @@ Runs locally on your PC; nothing is uploaded anywhere.
   it to that item, all of that kind on the character, or all you own. Only the picture changes: stats, affixes and
   sockets stay as they are. Unique and set items can't be restyled (their art comes from the game's tables), and
   weapons and armour have no picture choice.
+- **Find and move items** — search by item name, stats, location, or the name of a socketed rune/gem. Preview a move
+  to a compatible character's stash, inventory or cube, then apply it with the normal full-save backup, verification
+  and undo safeguards. Socketed contents travel with their host item.
 - **Item Art** — change which picture any unique, set or base item shows in your inventory (pick any of the game's own
   pictures, or copy another item's), and make a body armour look like another on your character (per base item:
   every Dusk Shroud, say). Helmets, shields, gloves, boots, belts and weapons use one entry for both their picture and
@@ -64,7 +67,8 @@ put them back. *Launch D2R* starts the game through Battle.net.
 `-seed`, you load the character and play one game, and once you've closed D2R and quit Battle.net the seed is taken
 off again and D2R starts normally. The character keeps the map. Taking `-seed` off matters: leaving it in makes the
 game's random numbers predictable. The tab walks you through each step, notices on its own when D2R and Battle.net
-open and close, and shows which characters were saved during the seeded game. If Horadric Toolkit is closed partway
+open and close, retries a launch request once if D2R does not appear, and confirms the normal relaunch before marking
+the run finished. If D2R still cannot be started, it reports that explicitly. If Horadric Toolkit is closed partway
 through, it finishes the run (and takes the seed off) the next time it starts. Keep the seeds you like as
 favourites, each with a name, what it's for (Cows, Pit / Tombs, Chaos, ...) and notes, and start a seed run from
 any of them with one click.

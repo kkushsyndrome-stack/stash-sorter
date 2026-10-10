@@ -149,6 +149,8 @@ def serve(session, port=0, open_browser=True):
                         "/api/session/end": lambda: session.session_end(),
                         "/api/session/delete": lambda: session.session_delete(body.get("id", "")),
                         "/api/plan_delete_items": lambda: session.plan_delete_items(body.get("keys") or []),
+                        "/api/plan_move_item": lambda: session.plan_move_item(
+                            body.get("key", ""), body.get("destination", ""), body.get("page", 5)),
                         "/api/plan_delete_mules": lambda: session.plan_delete_mules(body.get("names") or []),
                         "/api/plan_restyle": lambda: session.plan_restyle(body.get("changes") or []),
                         "/api/plan_rename_char": lambda: session.plan_rename_char(body.get("name", ""),

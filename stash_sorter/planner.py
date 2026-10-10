@@ -831,6 +831,74 @@ def plan_item_deletions(world, keys, stash_file=None):
     return plan
 
 
+def plan_item_move(world, key, destination, page):
+    """Plan moving one top-level item intact to a character's stash, inventory, or cube."""
+    if not isinstance(key, str) or not key:
+        raise ValueError("choose an item to move")
+    if not isinstance(destination, str) or not destination:
+        raise ValueError("choose a destination character")
+    try:
+        it, owner, src_where, _ = find_item(world, key)
+    except KeyError as e:
+        raise ValueError(f"item not found: {e.args[0]}") from None
+    target = next((c for c in world.characters if c.path.name.lower() == destination.lower()), None)
+    if target is None:
+        target = world.character(destination)
+    if target is None:
+        raise ValueError(f"no character called {destination}")
+    if page not in DEFAULT_GRIDS:
+        raise ValueError("choose a character stash, inventory, or cube")
+    if it.code == "box":
+        raise ValueError("the Horadric Cube itself can't be moved")
+
+    if page == PAGE_CUBE and not any(item.code == "box" for item in target.items):
+        raise ValueError(f"{target.name} doesn't have a Horadric Cube")
+    if hasattr(owner, "items"):
+        source_context = owner.version, owner.era, owner.hardcore
+    else:
+        tab_index = int(key.split("|", 2)[1][3:])
+        source_context = owner.tabs[tab_index].version, owner.era, owner.hardcore
+    if (target.version, target.era, target.hardcore) != source_context:
+        raise ValueError(f"{target.name} can't use this item's save: version, game era, and hardcore status must match")
+    if owner is target and it.mode == MODE_STORED and it.page == page:
+        raise ValueError(f"{C.display_name(it, world.gd, world.names)} is already in {target.name}'s "
+                         f"{PAGE_LABEL[page]}")
+
+    group = C.carry_one_group(it, world.gd)
+    if group and any(other is not it and C.carry_one_group(other, world.gd) == group for other in target.items):
+        raise ValueError(f"{target.name} already carries another unique charm from this group")
+
+    grid = Grid(*DEFAULT_GRIDS[page])
+    for other in target.items:
+        if other is it or other.mode != MODE_STORED or other.page != page:
+            continue
+        w, h = C.item_size(other, world.gd)
+        if not grid.fits(other.x, other.y, w, h):
+            raise ValueError(f"{target.name}'s {PAGE_LABEL[page]} has overlapping items; reload and check the save")
+        grid.mark(other.x, other.y, w, h)
+    width, height = C.item_size(it, world.gd)
+    spot = grid.find(width, height)
+    if spot is None:
+        raise ValueError(f"no room for {C.display_name(it, world.gd, world.names)} in {target.name}'s "
+                         f"{PAGE_LABEL[page]}")
+
+    rules = Ruleset(world.gd, world.names)
+    dest_label = target.name
+    if sum(c.name == target.name for c in world.characters) > 1:
+        dest_label = f"{target.name} ({target.path.stem})"
+    labels = rules.labels()
+    labels["manual"] = "Manual move"
+    plan = Plan(options=Options(mode="move-item"), stash_file="", labels=labels)
+    plan.moves.append(Move(key, C.display_name(it, world.gd, world.names), rules.categorize(it),
+                           owner.path.name, src_where, target.path.name, dest_label, page, *spot, item=it))
+    cells_used = sum(C.item_size(other, world.gd)[0] * C.item_size(other, world.gd)[1]
+                     for other in target.items if other is not it and other.mode == MODE_STORED
+                     and other.page in MULE_PAGES) + (width * height if page in MULE_PAGES else 0)
+    cells_total = sum(DEFAULT_GRIDS[p][0] * DEFAULT_GRIDS[p][1] for p in MULE_PAGES)
+    plan.mules.append(MulePlan(dest_label, target.path.name, "manual", False, 0, 0, cells_used, cells_total))
+    return plan
+
+
 def skinnable(item, gd):
     """Does this item show one of several stored inventory pictures (rings, amulets, charms, jewels)?
     Unique and set items take their art from the game's tables, whatever picture the save holds."""

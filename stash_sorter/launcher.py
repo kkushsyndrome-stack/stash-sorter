@@ -369,11 +369,14 @@ STAGES = {
     "playing": "Play one game with the seed",
     "closing": "The seed is in: closing D2R",
     "wait_closed_after": "Close Battle.net so the seed can be taken off",
+    "relaunching": "Starting D2R without the seed",
     "done": "Finished",
+    "launch_failed": "D2R did not start",
     "cancelled": "Cancelled",
 }
-FINAL = ("done", "cancelled")
-GIVE_UP_STARTING = 90  # seconds after launching with neither Battle.net nor D2R running: it was closed
+FINAL = ("done", "launch_failed", "cancelled")
+RETRY_STARTING = 15
+GIVE_UP_STARTING = 90  # seconds without D2R before reporting the launch failure
 SETTLE = 6             # seconds to leave D2R after the seed shows up (and after its last save) before closing it
 FORCE_AFTER = 20       # seconds to wait for D2R to close normally before ending it
 GAME_EXE, BATTLENET_EXE = "D2R.exe", "Battle.net.exe"
@@ -488,7 +491,7 @@ class SeedRun:
                       "relaunch": True, "stage": "wait_closed", "started": self.now(), "since": self.now(),
                       "launched": None, "snapshot": {}, "map_snapshot": {}, "changed": None, "taken_by": None,
                       "seen_at": None, "close_sent": None, "forced": False, "auto": self.auto, "error": None,
-                      "notes": notes}
+                      "launch_attempts": 0, "notes": notes}
         self._save()
         return self.tick()
 
@@ -514,9 +517,25 @@ class SeedRun:
             elif st["stage"] == "starting":
                 if game:
                     self._stage("playing")
-                elif not bnet and self.now() - st["launched"] > GIVE_UP_STARTING:
+                elif self.now() - st["launched"] > GIVE_UP_STARTING:
                     st["relaunch"] = False
-                    self._stage("wait_closed_after", "Battle.net closed before D2R started.")
+                    st["launch_failure"] = "D2R didn't start automatically. Close Battle.net to safely remove -seed."
+                    self._stage("wait_closed_after", "D2R didn't start with the seed; taking -seed off.")
+                    st["error"] = st["launch_failure"]
+                elif (st.get("launch_attempts", 0) < 2
+                      and self.now() - st["launched"] >= RETRY_STARTING):
+                    st["notes"].append("D2R hasn't appeared yet; sending the Battle.net launch request again.")
+                    self._launch()
+            if st["stage"] == "relaunching":
+                if game:
+                    self._stage("done", f"D2R started normally without -seed. The seed remains on {st.get('taken_by') or 'the character'}'s map.")
+                elif self.now() - st["launched"] > GIVE_UP_STARTING:
+                    self._stage("launch_failed", "The seed is off, but D2R did not start automatically.")
+                    st["error"] = "The seed is off. D2R did not start after two launch requests; start it from Battle.net."
+                elif (st.get("launch_attempts", 0) < 2
+                      and self.now() - st["launched"] >= RETRY_STARTING):
+                    st["notes"].append("D2R hasn't appeared yet; sending the normal Battle.net launch request again.")
+                    self._launch()
             if st["stage"] == "playing" and auto and game and not st.get("taken_by"):
                 taken = self._seed_taken()
                 if taken:
@@ -547,10 +566,14 @@ class SeedRun:
             if st["stage"] == "wait_closed_after" and not bnet and not game:
                 write_args(st["base"], self._backups(), path=self.config, check_running=False)
                 if st["relaunch"]:
-                    self._stage("done", f"-seed taken off; Battle.net now starts D2R with: {st['base'] or '(nothing)'}")
+                    st["launched"] = self.now()
+                    st["launch_attempts"] = 0
+                    self._stage("relaunching", f"-seed taken off; Battle.net now starts D2R with: {st['base'] or '(nothing)'}")
                     self._launch()
                 else:
                     self._stage("cancelled", "-seed taken off again.")
+                    if st.get("launch_failure"):
+                        st["error"] = st["launch_failure"]
         except (LaunchError, OSError, ValueError) as e:
             st["error"] = str(e)
             self._save()
@@ -558,6 +581,7 @@ class SeedRun:
 
     def _launch(self):
         try:
+            self.state["launch_attempts"] = self.state.get("launch_attempts", 0) + 1
             self.launch()
         except (LaunchError, OSError) as e:
             self.state["notes"].append(f"Couldn't start D2R: {e}")
@@ -576,12 +600,16 @@ class SeedRun:
         if not self.active or self.state["stage"] != "wait_closed_after" or not self.state["relaunch"]:
             raise LaunchError("There's nothing to start again right now.")
         self.state["launched"] = self.now()
+        self.state["launch_attempts"] = 0
         self._stage("starting")
         self._launch()
         return self.state
 
     def cancel(self):
         if not self.active:
+            return self.state
+        if self.state["stage"] == "relaunching":
+            self._stage("cancelled", "Cancelled after removing -seed; start D2R manually when ready.")
             return self.state
         if self.state["stage"] == "wait_closed":  # nothing was changed yet
             self._stage("cancelled", "Nothing was changed.")

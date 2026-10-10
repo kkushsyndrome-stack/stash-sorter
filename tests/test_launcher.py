@@ -194,10 +194,13 @@ class SeedRunTests(unittest.TestCase):
         self.assertEqual((st["stage"], st["changed"]), ("wait_closed_after", ["Sorc"]))
         self.assertEqual(self.args(), "-enablerespec -direct txt -seed 4242")  # Battle.net would write it back
         self.running = set()
-        self.assertEqual(run.tick()["stage"], "done")
+        self.assertEqual(run.tick()["stage"], "relaunching")
         self.assertEqual(self.args(), "-enablerespec -direct txt")
         self.assertEqual(self.launches[1], "-enablerespec -direct txt")  # started again, without the seed
         self.assertEqual(json.loads(self.cfg.read_bytes())["Games"]["wow"]["AdditionalLaunchArguments"], "-console")
+        self.assertEqual(run.state["stage"], "relaunching")
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        self.assertEqual(run.tick()["stage"], "done")
         self.assertFalse(run.active)
         run.dismiss()
         self.assertFalse((self.tmp / "seedrun.json").exists())
@@ -209,9 +212,11 @@ class SeedRunTests(unittest.TestCase):
         self.running = set()  # app was closed while D2R and Battle.net were closed too
         again = self.run_()
         self.assertTrue(again.active)
-        self.assertEqual(again.tick()["stage"], "done")
+        self.assertEqual(again.tick()["stage"], "relaunching")
         self.assertNotIn("-seed", self.args())
         self.assertEqual(len(self.launches), 2)
+        self.running = {L.GAME_PROCESS}
+        self.assertEqual(again.tick()["stage"], "done")
 
     def test_cancel(self):
         self.running = {L.BATTLENET_PROCESS}
@@ -301,10 +306,41 @@ class SeedRunTests(unittest.TestCase):
         self.running = {L.BATTLENET_PROCESS}  # D2R is gone; Battle.net still holds its settings
         run.closer = lambda image, force=False: (self.closed.append((image, force)), self.running.discard(image.lower()))
         st = run.tick()
-        self.assertEqual(st["stage"], "done")
+        self.assertEqual(st["stage"], "relaunching")
         self.assertEqual(self.closed[-1], ("Battle.net.exe", True))
         self.assertEqual(self.args(), "-enablerespec -direct txt")
         self.assertEqual(self.launches[-1], "-enablerespec -direct txt")  # started again, without the seed
+        self.running = {L.GAME_PROCESS}
+        self.assertEqual(run.tick()["stage"], "done")
+
+    def test_retries_seeded_and_normal_launches_then_reports_failure(self):
+        run = self.run_(auto=True)
+        run.start(81)
+        self.running = {L.BATTLENET_PROCESS}
+        self.clock[0] += L.RETRY_STARTING
+        self.assertEqual(run.tick()["stage"], "starting")
+        self.assertEqual(len(self.launches), 2)
+        self.clock[0] += L.GIVE_UP_STARTING
+        st = run.tick()
+        self.assertEqual(st["stage"], "cancelled")
+        self.assertIn("didn't start automatically", st["error"])
+        self.assertIn(("Battle.net.exe", True), self.closed)
+        self.assertNotIn("-seed", self.args())
+
+        run = self.run_()
+        run.start(82)
+        self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
+        run.tick()
+        self.running = set()
+        self.assertEqual(run.tick()["stage"], "relaunching")
+        self.assertNotIn("-seed", self.args())
+        self.running = {L.BATTLENET_PROCESS}
+        self.clock[0] += L.RETRY_STARTING
+        self.assertEqual(run.tick()["stage"], "relaunching")
+        self.clock[0] += L.GIVE_UP_STARTING
+        st = run.tick()
+        self.assertEqual(st["stage"], "launch_failed")
+        self.assertIn("start it from Battle.net", st["error"])
 
     def test_automatic_run_waits_for_d2r_and_gives_up_without_a_game(self):
         self.running = {L.BATTLENET_PROCESS, L.GAME_PROCESS}
